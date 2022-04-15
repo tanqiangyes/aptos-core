@@ -15,16 +15,21 @@ use std::fmt::{Debug, Display, Formatter};
 
 #[derive(Deserialize, Serialize, Clone, Eq, PartialEq)]
 /// This struct describes basic synchronization metadata.
+/// 这个结构描述了基本的同步元数据。
 pub struct SyncInfo {
     /// Highest quorum certificate known to the peer.
+    /// 对等方已知的最高仲裁证书。
     highest_quorum_cert: QuorumCert,
     /// Highest ordered cert known to the peer.
+    /// 对等方已知的最高排序证书。
     #[serde(alias = "highest_commit_cert")]
     highest_ordered_cert: Option<QuorumCert>,
     /// Highest commit cert (ordered cert with execution result) known to the peer.
+    /// 对等方已知的最高提交证书（具有执行结果的有序证书）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     highest_ledger_info: Option<LedgerInfoWithSignatures>,
     /// Optional highest timeout certificate if available.
+    /// 可选的最高超时证书（如果有）。
     highest_timeout_cert: Option<TimeoutCertificate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     highest_2chain_timeout_cert: Option<TwoChainTimeoutCertificate>,

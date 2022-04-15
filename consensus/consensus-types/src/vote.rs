@@ -19,6 +19,8 @@ use std::fmt::{Debug, Display, Formatter};
 /// receiving a proposal.
 /// Vote carries the `LedgerInfo` of a block that is going to be committed in case this vote
 /// is gathers QuorumCertificate (see the detailed explanation in the comments of `LedgerInfo`).
+/// Vote 是投票者最终发送的结构，以响应接收提案。
+/// Vote 带有将要提交的块的“LedgerInfo”，以防此投票收集 QuorumCertificate（请参阅“LedgerInfo”的注释中的详细说明）。
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct Vote {
     /// The data of the vote
@@ -26,10 +28,13 @@ pub struct Vote {
     /// The identity of the voter.
     author: Author,
     /// LedgerInfo of a block that is going to be committed in case this vote gathers QC.
+    /// 如果此投票收集 QC，将提交的块的 LedgerInfo。
     ledger_info: LedgerInfo,
     /// Signature of the LedgerInfo
+    /// LedgerInfo 的签名
     signature: Ed25519Signature,
     /// The round signatures can be aggregated into a timeout certificate if present.
+    /// 如果存在，可以将轮签名聚合到超时证书中。
     timeout_signature: Option<Ed25519Signature>,
     /// The 2-chain timeout and corresponding signature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,6 +94,7 @@ impl Vote {
 
     /// Generates a round signature, which can then be used for aggregating a timeout certificate.
     /// Typically called for generating vote messages that are sent upon timeouts.
+    /// 生成一个轮签名，然后可以将其用于聚合超时证书。通常要求生成在超时时发送的投票消息。
     pub fn add_timeout_signature(&mut self, signature: Ed25519Signature) {
         assert!(
             self.two_chain_timeout.is_none(),

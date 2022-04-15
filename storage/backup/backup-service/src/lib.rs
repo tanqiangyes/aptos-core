@@ -11,6 +11,7 @@ use tokio::runtime::{Builder, Runtime};
 
 pub fn start_backup_service(address: SocketAddr, db: Arc<AptosDB>) -> Runtime {
     let backup_handler = db.get_backup_handler();
+    info!("ARSLOG::: backup service handler. backup_handler: {:?}", &backup_handler);
     let routes = get_routes(backup_handler);
 
     let runtime = Builder::new_multi_thread()

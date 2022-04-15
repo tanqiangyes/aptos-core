@@ -12,6 +12,8 @@ use std::fmt::{Display, Formatter};
 /// receiving a proposal.
 /// VoteMsg carries the `LedgerInfo` of a block that is going to be committed in case this vote
 /// is gathers QuorumCertificate (see the detailed explanation in the comments of `LedgerInfo`).
+/// VoteMsg 是最终由选民发送的结构，以响应接收提案。
+/// VoteMsg 携带将要提交的块的“LedgerInfo”，以防此投票收集 QuorumCertificate（请参阅“LedgerInfo”评论中的详细说明）。
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct VoteMsg {
     /// The container for the vote (VoteData, LedgerInfo, Signature)

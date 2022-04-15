@@ -87,7 +87,8 @@ pub struct AptosHandle {
 }
 
 pub fn start(config: &NodeConfig, log_file: Option<PathBuf>) {
-    crash_handler::setup_panic_handler();
+    info!("ARSLOG::: start aptos, log_file: {:?}", log_file);
+    crash_handler::setup_panic_handler(); //设置日志钩子
 
     let mut logger = aptos_logger::Logger::new();
     logger
@@ -116,7 +117,7 @@ pub fn start(config: &NodeConfig, log_file: Option<PathBuf>) {
     } else if config.failpoints.is_some() {
         warn!("failpoints is set in config, but the binary doesn't compile with this feature");
     }
-
+    info!("ARSLOG::: aptos config is ok. config: {:?}", &config);
     let _node_handle = setup_environment(config, logger);
     let term = Arc::new(AtomicBool::new(false));
 
@@ -136,7 +137,7 @@ pub fn load_test_environment<R>(
     R: ::rand::RngCore + ::rand::CryptoRng,
 {
     let config_temp_path = aptos_temppath::TempPath::new();
-
+    info!("test add log, config_temp_path: {:?}", config_temp_path);
     let (try_load, config_path) = if let Some(config_path) = config_path {
         (
             config_path.join("0").join("node.yaml").exists(),
@@ -145,17 +146,17 @@ pub fn load_test_environment<R>(
     } else {
         (false, config_temp_path.as_ref().to_path_buf())
     };
-
+    info!("test add log, try_load: {:?}, config_path: {:?}", try_load, config_path);
     std::fs::DirBuilder::new()
         .recursive(true)
         .create(&config_path)
         .unwrap();
 
     let config_path = config_path.canonicalize().unwrap();
-
+    info!("test add log, config_path: {:?}", config_path);
     let validator_config_path = config_path.join("0").join("node.yaml");
     let aptos_root_key_path = config_path.join("mint.key");
-
+    info!("test add log, validator_config_path: {:?}, aptos_root_key_path: {:?}", validator_config_path, aptos_root_key_path);
     let config = if try_load {
         NodeConfig::load(&validator_config_path).expect("Unable to load config:")
     } else {
@@ -248,7 +249,7 @@ fn setup_debug_interface(config: &NodeConfig, logger: Option<Arc<Logger>>) -> No
     .unwrap()
     .next()
     .unwrap();
-
+    info!("ARSLOG::: node debug interface start");
     NodeDebugService::new(addr, logger, config)
 }
 
@@ -485,15 +486,17 @@ pub fn setup_environment(node_config: &NodeConfig, logger: Option<Arc<Logger>>) 
 
     let metrics_port = node_config.debug_interface.metrics_server_port;
     let metric_host = node_config.debug_interface.address.clone();
-    thread::spawn(move || metric_server::start_server(metric_host, metrics_port, false));
+    info!("ARSLOG::: start local metric_server. metrics server address: {:?}, metrics server port: {:?}", &metrics_host, &metrics_port);
+    thread::spawn(move || metric_server::start_server(metric_host, metrics_port, false));//启动本地计量服务
     let public_metrics_port = node_config.debug_interface.public_metrics_server_port;
     let public_metric_host = node_config.debug_interface.address.clone();
+    info!("ARSLOG::: start public metric_server. public metrics server address: {:?}, public metrics server port: {:?}", &metricspublic_metric_host_host, &metricpublic_metrics_ports_port);
     thread::spawn(move || {
-        metric_server::start_server(public_metric_host, public_metrics_port, true)
+        metric_server::start_server(public_metric_host, public_metrics_port, true)//启动公共计量服务
     });
-
+    info!("ARSLOG::: start to start storage service.");
     let mut instant = Instant::now();
-    let (aptos_db, db_rw) = DbReaderWriter::wrap(
+    let (aptos_db, db_rw) = DbReaderWriter::wrap(//包装了db
         AptosDB::open(
             &node_config.storage.dir(),
             false, /* readonly */
@@ -502,11 +505,14 @@ pub fn setup_environment(node_config: &NodeConfig, logger: Option<Arc<Logger>>) 
         )
         .expect("DB should open."),
     );
+    info!("ARSLOG::: aptos_db open successfully.");
     let _simple_storage_service = start_storage_service_with_db(node_config, Arc::clone(&aptos_db));
+    info!("ARSLOG::: started storage service for some things. for example: transaction, proof, startup info");
     let backup_service = start_backup_service(
         node_config.storage.backup_service_address,
         Arc::clone(&aptos_db),
     );
+    info!("ARSLOG::: backup service started successfully.");
 
     let genesis_waypoint = node_config.base.waypoint.genesis_waypoint();
     // if there's genesis txn and waypoint, commit it if the result matches.
@@ -520,6 +526,10 @@ pub fn setup_environment(node_config: &NodeConfig, logger: Option<Arc<Logger>>) 
 
     debug!(
         "Storage service started in {} ms",
+        instant.elapsed().as_millis()
+    );
+    info!(
+        "ARSLOG::: Storage service started in {} ms",
         instant.elapsed().as_millis()
     );
 
@@ -536,6 +546,7 @@ pub fn setup_environment(node_config: &NodeConfig, logger: Option<Arc<Logger>>) 
         ON_CHAIN_CONFIG_REGISTRY,
         Arc::new(RwLock::new(db_rw.clone())),
     );
+    info!("ARSLOG::: event subscription service.");
     let mempool_reconfig_subscription = event_subscription_service
         .subscribe_to_reconfigurations()
         .unwrap();

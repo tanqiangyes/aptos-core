@@ -45,7 +45,7 @@ pub fn maybe_bootstrap<V: VMExecutor>(
     genesis_txn: &Transaction,
     waypoint: Waypoint,
 ) -> Result<bool> {
-    let tree_state = db.reader.get_latest_tree_state()?;
+    let tree_state = db.reader.get_latest_tree_state()?;//获取之前的状态树
     // if the waypoint is not targeted with the genesis txn, it may be either already bootstrapped, or
     // aiming for state sync to catch up.
     if tree_state.num_transactions != waypoint.version() {

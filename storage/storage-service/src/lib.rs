@@ -38,13 +38,13 @@ impl StorageService {
     fn handle_message(&self, input_message: Vec<u8>) -> Result<Vec<u8>, Error> {
         let input = bcs::from_bytes(&input_message)?;
         let output = match input {
-            storage_interface::StorageRequest::GetStateValueWithProofByVersionRequest(req) => {
+            storage_interface::StorageRequest::GetStateValueWithProofByVersionRequest(req) => {//根据版本获取proof状态值
                 bcs::to_bytes(&self.get_account_state_with_proof_by_version(&req))
             }
-            storage_interface::StorageRequest::GetStartupInfoRequest => {
+            storage_interface::StorageRequest::GetStartupInfoRequest => {//获取启动状态
                 bcs::to_bytes(&self.get_startup_info())
             }
-            storage_interface::StorageRequest::SaveTransactionsRequest(req) => {
+            storage_interface::StorageRequest::SaveTransactionsRequest(req) => {//保存交易请求
                 bcs::to_bytes(&self.save_transactions(&req))
             }
         };
@@ -78,7 +78,7 @@ impl StorageService {
     fn run(self, config: &NodeConfig) -> JoinHandle<()> {
         let mut network_server =
             NetworkServer::new("storage", config.storage.address, config.storage.timeout_ms);
-        let ret = thread::spawn(move || loop {
+        let ret = thread::spawn(move || loop {//循环读取消息处理
             if let Err(e) = self.process_one_message(&mut network_server) {
                 warn!(
                     error = ?e,
@@ -91,8 +91,8 @@ impl StorageService {
     }
 
     fn process_one_message(&self, network_server: &mut NetworkServer) -> Result<(), Error> {
-        let request = network_server.read()?;
-        let response = self.handle_message(request)?;
+        let request = network_server.read()?;//通过从网络读取数据
+        let response = self.handle_message(request)?;//处理数据
         network_server.write(&response)?;
         Ok(())
     }

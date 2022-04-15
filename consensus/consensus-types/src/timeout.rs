@@ -10,6 +10,7 @@ use std::fmt::{Display, Formatter};
 
 /// This structure contains all the information necessary to construct a signature
 /// on the equivalent of a timeout message
+/// 此结构包含在等效于超时消息上构造签名所需的所有信息
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, CryptoHasher, BCSCryptoHash)]
 pub struct Timeout {
     /// Epoch number corresponds to the set of validators that are active for this round.

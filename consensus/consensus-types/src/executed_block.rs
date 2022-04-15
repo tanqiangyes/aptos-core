@@ -19,13 +19,16 @@ use std::fmt::{Debug, Display, Formatter};
 /// ExecutedBlocks are managed in a speculative tree, the committed blocks form a chain. Besides
 /// block data, each executed block also has other derived meta data which could be regenerated from
 /// blocks.
+/// ExecutedBlocks 在推测树中管理，提交的块形成一个链。除了块数据，每个执行的块还有其他可以从块中重新生成的派生元数据。
 #[derive(Clone, Eq, PartialEq)]
 pub struct ExecutedBlock {
     /// Block data that cannot be regenerated.
+    /// 区块数据
     block: Block,
     /// The state_compute_result is calculated for all the pending blocks prior to insertion to
     /// the tree. The execution results are not persisted: they're recalculated again for the
     /// pending blocks upon restart.
+    /// 状态计算结果
     state_compute_result: StateComputeResult,
 }
 

@@ -19,10 +19,12 @@ use std::{
 
 /// This structure contains all the information needed by safety rules to
 /// evaluate a proposal / block for correctness / safety and to produce a Vote.
+/// 该结构包含安全规则所需的所有信息，以评估提案块的正确性安全性并进行投票。
 #[derive(Clone, Debug, CryptoHasher, Deserialize, BCSCryptoHash, Serialize)]
 pub struct VoteProposal {
     /// Contains the data necessary to construct the parent's execution output state
     /// and the childs in a verifiable way
+    /// 包含以可验证的方式构造父级执行输出状态和子级所需的数据
     accumulator_extension_proof: AccumulatorExtensionProof<TransactionAccumulatorHasher>,
     /// The block / proposal to evaluate
     #[serde(bound(deserialize = "Block: Deserialize<'de>"))]
@@ -117,10 +119,12 @@ impl Display for VoteProposal {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MaybeSignedVoteProposal {
     /// The vote proposal to be signed.
+    /// 待签名的投票提案。
     pub vote_proposal: VoteProposal,
 
     /// The signature of this proposal's hash from the Execution Correctness service. It is
     /// an `Option` because the LEC can be configured to not sign the vote hash.
+    /// 来自执行正确性服务的此提案的哈希签名。这是一个“选项”，因为可以将 LEC 配置为不对投票哈希进行签名。
     pub signature: Option<Ed25519Signature>,
 }
 

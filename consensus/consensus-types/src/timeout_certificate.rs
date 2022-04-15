@@ -14,6 +14,7 @@ use std::{collections::BTreeMap, fmt};
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 /// TimeoutCertificate is a proof that 2f+1 participants in epoch i
 /// have voted in round r and we can now move to round r+1.
+/// TimeoutCertificate 证明 2f+1 个参与者在 epoch i 已经在第 r 轮投票，我们现在可以进入第 r+1 轮。
 pub struct TimeoutCertificate {
     timeout: Timeout,
     signatures: BTreeMap<Author, Ed25519Signature>,

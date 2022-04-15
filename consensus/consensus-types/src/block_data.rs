@@ -20,17 +20,21 @@ use std::collections::BTreeMap;
 pub enum BlockType {
     Proposal {
         /// T of the block (e.g. one or more transaction(s)
+        /// 交易
         payload: Payload,
         /// Author of the block that can be validated by the author's public key and the signature
+        /// 作者，可以通过签名验证正确与否
         author: Author,
     },
     /// NIL blocks don't have authors or signatures: they're generated upon timeouts to fill in the
     /// gaps in the rounds.
+    /// 空的区块，只是为了弥补超时没有生成区块的轮次
     NilBlock,
     /// A genesis block is the first committed block in any epoch that is identically constructed on
     /// all validators by any (potentially different) LedgerInfo that justifies the epoch change
     /// from the previous epoch.  The genesis block is used as the the first root block of the
     /// BlockTree for all epochs.
+    /// 所有不同纪元的初始第一个块（创世块可以看做第一个纪元的第一个块）
     Genesis,
 }
 
@@ -39,9 +43,11 @@ pub enum BlockType {
 /// Each block must know the id of its parent and keep the QuorurmCertificate to that parent.
 pub struct BlockData {
     /// Epoch number corresponds to the set of validators that are active for this block.
+    /// 纪元
     epoch: u64,
     /// The round of a block is an internal monotonically increasing counter used by Consensus
     /// protocol.
+    /// 共识系统使用的轮次
     round: Round,
     /// The approximate physical time a block is proposed by a proposer.  This timestamp is used
     /// for
@@ -59,11 +65,14 @@ pub struct BlockData {
     ///   4. Current: an honest validator is not issuing blocks with a timestamp in the
     ///       future. Currently we consider a block is malicious if it was issued more
     ///       that 5 minutes in the future.
+    /// 时间戳，用来标识区块产生时间，同时会让其他人验证并投票的时候参考时间因素
     timestamp_usecs: u64,
     /// Contains the quorum certified ancestor and whether the quorum certified ancestor was
     /// voted on successfully
+    /// 包含quorum认证的祖先以及quorum认证的祖先是否被成功投票
     quorum_cert: QuorumCert,
     /// If a block is a real proposal, contains its author and signature.
+    /// 如果真的提议了一个区块，包含它的作者和签名
     block_type: BlockType,
 }
 

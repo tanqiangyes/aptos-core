@@ -67,15 +67,19 @@ impl ValidatorConsensusInfo {
 /// Supports validation of signatures for known authors with individual voting powers. This struct
 /// can be used for all signature verification operations including block and network signature
 /// verification, respectively.
+/// 支持验证具有个人投票权的已知作者的签名。该结构可用于所有签名验证操作，分别包括区块和网络签名验证。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
 pub struct ValidatorVerifier {
     /// An ordered map of each validator's on-chain account address to its pubkeys
     /// and voting power.
+    /// 每个验证者的链上账户地址与其公钥和投票权的有序映射。
     address_to_validator_info: BTreeMap<AccountAddress, ValidatorConsensusInfo>,
     /// The minimum voting power required to achieve a quorum
+    /// 达到法定人数所需的最低投票权
     quorum_voting_power: u64,
     /// Total voting power of all validators (cached from address_to_validator_info)
+    /// 所有验证者的总投票权（从 address_to_validator_info 缓存）
     total_voting_power: u64,
 }
 

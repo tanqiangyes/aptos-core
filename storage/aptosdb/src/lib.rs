@@ -293,6 +293,7 @@ impl AptosDB {
         );
 
         let path = db_root_path.as_ref().join("aptosdb");
+        info!("ARSLOG::: aptosdb opening. path: {:?}, rocksdb_config: {:?}", &path, &rocksdb_config);
         let instant = Instant::now();
 
         let mut rocksdb_opts = gen_rocksdb_options(&rocksdb_config);

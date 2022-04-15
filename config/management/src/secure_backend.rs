@@ -81,6 +81,7 @@ impl TryInto<config::SecureBackend> for SecureBackend {
                 config::SecureBackend::OnDiskStorage(config)
             }
             GITHUB => {
+                println!("{:?}", &self.parameters);
                 let repository_owner = self
                     .parameters
                     .remove("repository_owner")

@@ -16,6 +16,7 @@ use std::{
 
 /// This structure contains all the information necessary to construct a signature
 /// on the equivalent of a AptosBFT v4 timeout message.
+/// 此结构包含在等效于 AptosBFT v4 超时消息上构建签名所需的所有信息。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TwoChainTimeout {
     /// Epoch number corresponds to the set of validators that are active for this round.

@@ -18,8 +18,10 @@ use std::{
 #[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct QuorumCert {
     /// The vote information certified by the quorum.
+    /// 投票信息
     vote_data: VoteData,
     /// The signed LedgerInfo of a committed block that carries the data about the certified block.
+    /// 已提交区块的签名 LedgerInfo，其中包含有关已认证区块的数据。
     signed_ledger_info: LedgerInfoWithSignatures,
 }
 

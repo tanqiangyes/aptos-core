@@ -73,9 +73,9 @@ fn main() {
             None
         };
         let genesis_modules = if let Some(module_paths) = args.genesis_modules {
-            framework::load_modules_from_paths(&module_paths)
+            framework::load_modules_from_paths(&module_paths)//第一次加载blob进来
         } else {
-            cached_framework_packages::module_blobs().to_vec()
+            cached_framework_packages::module_blobs().to_vec()//从缓存中取了
         };
         aptos_node::load_test_environment(
             args.config,
@@ -87,7 +87,7 @@ fn main() {
         );
     } else {
         let config = NodeConfig::load(args.config.unwrap()).expect("Failed to load node config");
-        println!("Using node config {:?}", &config);
+        println!("ARSLOG::: Using node config {:?}", &config);
         aptos_node::start(&config, None);
     };
 }

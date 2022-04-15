@@ -10,6 +10,7 @@ use std::fmt;
 
 /// ProposalMsg contains the required information for the proposer election protocol to make its
 /// choice (typically depends on round and proposer info).
+/// ProposalMsg 包含提议者选举协议做出选择所需的信息（通常取决于轮次和提议者信息）。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProposalMsg {
     proposal: Block,

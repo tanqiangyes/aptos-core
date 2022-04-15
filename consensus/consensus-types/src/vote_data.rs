@@ -7,11 +7,14 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
 /// VoteData keeps the information about the block, and its parent.
+/// VoteData 保存有关区块及其父区块的信息。
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, CryptoHasher, BCSCryptoHash)]
 pub struct VoteData {
     /// Contains all the block information needed for voting for the proposed round.
+    /// 包含对提议的轮次进行投票所需的所有区块信息。
     proposed: BlockInfo,
     /// Contains all the block information for the block the proposal is extending.
+    /// 包含提案正在扩展的区块的所有区块信息。
     parent: BlockInfo,
 }
 
@@ -34,6 +37,7 @@ impl Display for VoteData {
 
 impl VoteData {
     /// Constructs a new VoteData from the block information of a proposed block and the block it extends.
+    /// 从提议块的块信息和它扩展的块中构造一个新的 VoteData。
     pub fn new(proposed: BlockInfo, parent: BlockInfo) -> Self {
         Self { proposed, parent }
     }

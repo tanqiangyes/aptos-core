@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Data structure for safety rules to ensure consensus safety.
+/// 安全规则的数据结构，以确保共识安全。
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize, Clone, Default)]
 pub struct SafetyData {
     pub epoch: u64,
