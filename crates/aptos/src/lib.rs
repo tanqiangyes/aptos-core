@@ -3,8 +3,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod account;
 pub mod common;
-pub mod list;
 pub mod move_tool;
 pub mod op;
 
@@ -16,7 +16,9 @@ use clap::Parser;
 #[derive(Parser)]
 #[clap(name = "aptos", author, version, propagate_version = true)]
 pub enum Tool {
-    List(list::ListResources),
+    #[clap(subcommand)]
+    Account(account::AccountTool),
+    Init(common::init::InitTool),
     #[clap(subcommand)]
     Move(move_tool::MoveTool),
     #[clap(subcommand)]
@@ -26,9 +28,10 @@ pub enum Tool {
 impl Tool {
     pub async fn execute(self) -> CliResult {
         match self {
-            Tool::List(list_tool) => list_tool.execute().await,
+            Tool::Account(tool) => tool.execute().await,
+            Tool::Init(tool) => tool.execute().await,
             Tool::Move(tool) => tool.execute().await,
-            Tool::Op(op_tool) => op_tool.execute().await,
+            Tool::Op(tool) => tool.execute().await,
         }
     }
 }

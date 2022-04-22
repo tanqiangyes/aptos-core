@@ -65,6 +65,7 @@ paths:
       operationId: get_account
       tags:
         - accounts
+        - state
       parameters:
         - $ref: '#/components/parameters/AccountAddress'
       responses:
@@ -86,6 +87,7 @@ paths:
       operationId: get_account_resources
       tags:
         - accounts
+        - state
       parameters:
         - $ref: '#/components/parameters/AccountAddress'
         - $ref: '#/components/parameters/LedgerVersion'
@@ -110,12 +112,47 @@ paths:
           $ref: '#/components/responses/404'
         "500":
           $ref: '#/components/responses/500'
+  /accounts/{address}/resource/{resource_type}:
+    get:
+      summary: Get resource by account address and resource type.
+      operationId: get_account_resource # TODO: make it query_resource if query path is supported
+      description: |
+        This API renders a resource identified by the owner account
+        `address` and the `resource_type`, at a ledger version (AKA
+        transaction version) specified as a query param, otherwise the
+        latest version is used.
+      tags:
+        - accounts
+        - state
+      parameters:
+        - $ref: '#/components/parameters/AccountAddress'
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/MoveStructTagId'
+          example: "0x1::AptosAccount::AptosAccount"
+        - $ref: '#/components/parameters/LedgerVersion'
+      responses:
+        "200":
+          description: Returns a resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResource'
+        "400":
+          $ref: '#/components/responses/400'
+        "404":
+          $ref: '#/components/responses/404'
+        "500":
+          $ref: '#/components/responses/500'
   /accounts/{address}/modules:
     get:
       summary: Get account modules
       operationId: get_account_modules
       tags:
         - accounts
+        - state
       parameters:
         - $ref: '#/components/parameters/AccountAddress'
         - $ref: '#/components/parameters/LedgerVersion'
@@ -134,6 +171,42 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/MoveModule'
+        "400":
+          $ref: '#/components/responses/400'
+        "404":
+          $ref: '#/components/responses/404'
+        "500":
+          $ref: '#/components/responses/500'
+  /accounts/{address}/module/{module_name}:
+    get:
+      summary: Get module by module id.
+      operationId: get_account_module
+      description: |
+        This API renders a Move module identified by the module id. A
+        module id consists of the module owner `address` and the
+        `module_name`. The module is rendered at a ledger version (AKA
+        transaction version) specified as a query param, otherwise the
+        latest version is used.
+      tags:
+        - accounts
+        - state
+      parameters:
+        - $ref: '#/components/parameters/AccountAddress'
+        - name: module_name
+          in: path
+          required: true
+          description: The name of the module.
+          schema:
+            type: string
+          example: "GUID"
+        - $ref: '#/components/parameters/LedgerVersion'
+      responses:
+        "200":
+          description: Returns a move module.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MoveModule'
         "400":
           $ref: '#/components/responses/400'
         "404":
@@ -616,7 +689,7 @@ components:
     MoveTypeTagId:
       title: Move Type Tag ID
       type: string
-      pattern: '^(bool|u8|u64|u128|address|signer|vector<.+>|0x[0-9a-zA-Z:_<>]+)$'
+      pattern: '^(bool|u8|u64|u128|address|signer|vector<.+>|0x[0-9a-zA-Z:_<, >]+)$'
       description: |
         String representation of an on-chain Move type tag that is exposed in transaction payload.
 
@@ -647,7 +720,7 @@ components:
     MoveTypeId:
       title: Move Type ID
       type: string
-      pattern: '^(bool|u8|u64|u128|address|signer|vector<.+>|0x[0-9a-zA-Z:_<>]+|^&(mut )?.+$|T\d+)$'
+      pattern: '^(bool|u8|u64|u128|address|signer|vector<.+>|0x[0-9a-zA-Z:_<, >]+|^&(mut )?.+$|T\d+)$'
       description: |
         String representation of an on-chain Move type identifier defined by the Move language.
 

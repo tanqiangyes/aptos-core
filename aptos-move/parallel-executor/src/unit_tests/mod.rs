@@ -7,17 +7,21 @@ use crate::{
     scheduler::{Scheduler, SchedulerTask, TaskGuard},
 };
 use rand::random;
-use std::{fmt::Debug, hash::Hash, sync::atomic::AtomicUsize};
+use std::{
+    fmt::Debug,
+    hash::Hash,
+    sync::{atomic::AtomicUsize, Arc},
+};
 
 fn run_and_assert<K, V>(transactions: Vec<Transaction<K, V>>)
 where
     K: PartialOrd + Send + Sync + Clone + Hash + Eq + 'static,
     V: Send + Sync + Debug + Clone + Eq + 'static,
 {
-    let baseline = ExpectedOutput::generate_baseline(&transactions);
-
     let output = ParallelTransactionExecutor::<Transaction<K, V>, Task<K, V>>::new()
-        .execute_transactions_parallel((), transactions);
+        .execute_transactions_parallel((), transactions.clone());
+
+    let baseline = ExpectedOutput::generate_baseline(&transactions);
 
     assert!(baseline.check_output(&output))
 }
@@ -34,9 +38,9 @@ fn cycle_transactions() {
         let key = random::<[u8; 32]>();
         for _ in 0..WRITES_PER_KEY {
             transactions.push(Transaction::Write {
-                reads: vec![key],
-                actual_writes: vec![(key, random::<u64>())],
-                skipped_writes: vec![],
+                incarnation: Arc::new(AtomicUsize::new(0)),
+                reads: vec![vec![key]],
+                writes: vec![vec![(key, random::<u64>())]],
             })
         }
     }
@@ -53,16 +57,16 @@ fn one_reads_all_barrier() {
     for _ in 0..NUM_BLOCKS {
         for key in &keys {
             transactions.push(Transaction::Write {
-                reads: vec![*key],
-                actual_writes: vec![(*key, random::<u64>())],
-                skipped_writes: vec![],
+                incarnation: Arc::new(AtomicUsize::new(0)),
+                reads: vec![vec![*key]],
+                writes: vec![vec![(*key, random::<u64>())]],
             })
         }
         // One transaction reading the write results of every prior transactions in the block.
         transactions.push(Transaction::Write {
-            reads: keys.clone(),
-            actual_writes: vec![],
-            skipped_writes: vec![],
+            incarnation: Arc::new(AtomicUsize::new(0)),
+            reads: vec![keys.clone()],
+            writes: vec![vec![]],
         })
     }
     run_and_assert(transactions)
@@ -75,19 +79,19 @@ fn one_writes_all_barrier() {
     for _ in 0..NUM_BLOCKS {
         for key in &keys {
             transactions.push(Transaction::Write {
-                reads: vec![*key],
-                actual_writes: vec![(*key, random::<u64>())],
-                skipped_writes: vec![],
+                incarnation: Arc::new(AtomicUsize::new(0)),
+                reads: vec![vec![*key]],
+                writes: vec![vec![(*key, random::<u64>())]],
             })
         }
         // One transaction writing to the write results of every prior transactions in the block.
         transactions.push(Transaction::Write {
-            reads: keys.clone(),
-            actual_writes: keys
+            incarnation: Arc::new(AtomicUsize::new(0)),
+            reads: vec![keys.clone()],
+            writes: vec![keys
                 .iter()
                 .map(|key| (*key, random::<u64>()))
-                .collect::<Vec<_>>(),
-            skipped_writes: vec![],
+                .collect::<Vec<_>>()],
         })
     }
     run_and_assert(transactions)
@@ -101,9 +105,9 @@ fn early_aborts() {
     for _ in 0..NUM_BLOCKS {
         for key in &keys {
             transactions.push(Transaction::Write {
-                reads: vec![*key],
-                actual_writes: vec![(*key, random::<u64>())],
-                skipped_writes: vec![],
+                incarnation: Arc::new(AtomicUsize::new(0)),
+                reads: vec![vec![*key]],
+                writes: vec![vec![(*key, random::<u64>())]],
             })
         }
         // One transaction that triggers an abort
@@ -120,9 +124,9 @@ fn early_skips() {
     for _ in 0..NUM_BLOCKS {
         for key in &keys {
             transactions.push(Transaction::Write {
-                reads: vec![*key],
-                actual_writes: vec![(*key, random::<u64>())],
-                skipped_writes: vec![],
+                incarnation: Arc::new(AtomicUsize::new(0)),
+                reads: vec![vec![*key]],
+                writes: vec![vec![(*key, random::<u64>())]],
             })
         }
         // One transaction that triggers an abort
@@ -140,9 +144,8 @@ fn scheduler_tasks() {
         // not calling finish execution, so validation tasks not dispatched.
         assert!(matches!(
             s.next_task(),
-            SchedulerTask::ExecutionTask(j, None, _) if i == j
+            SchedulerTask::ExecutionTask((j, 0), None, _) if i == j
         ));
-        assert!(s.get_executing_incarnation(i) == 0);
     }
 
     // Finish execution for txns 0, 2, 4. txn 0 without validate_suffix and because
@@ -202,24 +205,21 @@ fn scheduler_tasks() {
     assert!(!s.try_abort(3, 0));
     assert!(matches!(
         s.finish_abort(3, 0, TaskGuard::new(&fake_counter)),
-        SchedulerTask::ExecutionTask(3, None, _)
+        SchedulerTask::ExecutionTask((3, 1), None, _)
     ));
-    assert!(s.get_executing_incarnation(3) == 1);
 
     // can abort even after succesful validation
     assert!(s.try_abort(4, 0));
     assert!(matches!(
         s.finish_abort(4, 0, TaskGuard::new(&fake_counter)),
-        SchedulerTask::ExecutionTask(4, None, _)
+        SchedulerTask::ExecutionTask((4, 1), None, _)
     ));
-    assert!(s.get_executing_incarnation(4) == 1);
 
     // txn 4 is aborted, so there won't be a validation task.
     assert!(matches!(
         s.next_task(),
-        SchedulerTask::ExecutionTask(5, None, _)
+        SchedulerTask::ExecutionTask((5, 0), None, _)
     ));
-    assert!(s.get_executing_incarnation(5) == 0);
     // Wrap up all outstanding tasks.
     assert!(matches!(
         s.finish_execution(4, 1, false, TaskGuard::new(&fake_counter)),
@@ -252,9 +252,8 @@ fn scheduler_dependency() {
         // not calling finish execution, so validation tasks not dispatched.
         assert!(matches!(
             s.next_task(),
-            SchedulerTask::ExecutionTask(j, None, _) if j == i
+            SchedulerTask::ExecutionTask((j, 0), None, _) if j == i
         ));
-        assert!(s.get_executing_incarnation(i) == 0);
     }
 
     assert!(matches!(
@@ -263,9 +262,8 @@ fn scheduler_dependency() {
     ));
     assert!(matches!(
         s.next_task(),
-        SchedulerTask::ExecutionTask(5, None, _)
+        SchedulerTask::ExecutionTask((5, 0), None, _)
     ));
-    assert!(s.get_executing_incarnation(5) == 0);
 
     assert!(s.wait_for_dependency(3, 0).is_none());
     assert!(s.wait_for_dependency(4, 2).is_some());
@@ -274,11 +272,11 @@ fn scheduler_dependency() {
         s.finish_execution(2, 0, false, TaskGuard::new(&fake_counter)),
         SchedulerTask::ValidationTask((2, 0), _)
     ));
+    // resumed task doesn't bump incarnation
     assert!(matches!(
         s.next_task(),
-        SchedulerTask::ExecutionTask(4, Some(_), _)
+        SchedulerTask::ExecutionTask((4, 0), Some(_), _)
     ));
-    assert!(s.get_executing_incarnation(4) == 1);
 }
 
 #[test]
@@ -290,10 +288,12 @@ fn scheduler_incarnation() {
         // not calling finish execution, so validation tasks not dispatched.
         assert!(matches!(
             s.next_task(),
-            SchedulerTask::ExecutionTask(j, None, _) if j == i
+            SchedulerTask::ExecutionTask((j, 0), None, _) if j == i
         ));
-        assert!(s.get_executing_incarnation(i) == 0);
     }
+    // Should not matter since drain_idx is already 5.
+    s.set_stop_idx(3);
+
     // execution index = 5
     assert!(s.wait_for_dependency(1, 0).is_some());
     assert!(s.wait_for_dependency(3, 0).is_some());
@@ -322,9 +322,8 @@ fn scheduler_incarnation() {
 
     assert!(matches!(
         s.finish_abort(2, 0, TaskGuard::new(&fake_counter)),
-        SchedulerTask::ExecutionTask(2, None, _)
+        SchedulerTask::ExecutionTask((2, 1), None, _)
     ));
-    assert!(s.get_executing_incarnation(2) == 1);
 
     assert!(matches!(
         s.finish_execution(0, 0, false, TaskGuard::new(&fake_counter)),
@@ -339,32 +338,29 @@ fn scheduler_incarnation() {
 
     assert!(matches!(
         s.next_task(),
-        SchedulerTask::ExecutionTask(1, Some(_), _)
+        SchedulerTask::ExecutionTask((1, 0), Some(_), _)
     ));
-    assert!(s.get_executing_incarnation(1) == 1);
     assert!(matches!(
         s.next_task(),
-        SchedulerTask::ExecutionTask(3, Some(_), _)
+        SchedulerTask::ExecutionTask((3, 0), Some(_), _)
     ));
-    assert!(s.get_executing_incarnation(3) == 1);
     assert!(matches!(
         s.next_task(),
-        SchedulerTask::ExecutionTask(4, None, _)
+        SchedulerTask::ExecutionTask((4, 1), None, _)
     ));
-    assert!(s.get_executing_incarnation(4) == 1);
     // execution index = 5
 
     assert!(matches!(
-        s.finish_execution(1, 1, false, TaskGuard::new(&fake_counter)),
-        SchedulerTask::ValidationTask((1, 1), _)
+        s.finish_execution(1, 0, false, TaskGuard::new(&fake_counter)),
+        SchedulerTask::ValidationTask((1, 0), _)
     ));
     assert!(matches!(
         s.finish_execution(2, 1, false, TaskGuard::new(&fake_counter)),
         SchedulerTask::ValidationTask((2, 1), _)
     ));
     assert!(matches!(
-        s.finish_execution(3, 1, false, TaskGuard::new(&fake_counter)),
-        SchedulerTask::ValidationTask((3, 1), _)
+        s.finish_execution(3, 0, false, TaskGuard::new(&fake_counter)),
+        SchedulerTask::ValidationTask((3, 0), _)
     ));
 
     // validation index is 4, so finish execution doesn't return validation task, next task does.
@@ -375,6 +371,99 @@ fn scheduler_incarnation() {
     assert!(matches!(
         s.next_task(),
         SchedulerTask::ValidationTask((4, 1), _)
+    ));
+
+    assert!(matches!(s.next_task(), SchedulerTask::Done));
+}
+
+#[test]
+fn scheduler_stop_idx() {
+    let s = Scheduler::new(5);
+    let fake_counter = AtomicUsize::new(0);
+
+    for i in 0..2 {
+        // not calling finish execution, so validation tasks not dispatched.
+        assert!(matches!(
+            s.next_task(),
+            SchedulerTask::ExecutionTask((j, 0), None, _) if j == i
+        ));
+    }
+    // stop_idx is now 3, no txn > 2 has been scheduled, so txns 3,4 won't ever execute.
+    s.set_stop_idx(3);
+
+    assert!(matches!(
+        s.next_task(),
+        SchedulerTask::ExecutionTask((2, 0), None, _)
+    ));
+
+    // Finish executions & dispatch validation tasks.
+    assert!(matches!(
+        s.finish_execution(0, 0, true, TaskGuard::new(&fake_counter)),
+        SchedulerTask::NoTask
+    ));
+    assert!(matches!(
+        s.finish_execution(1, 0, true, TaskGuard::new(&fake_counter)),
+        SchedulerTask::NoTask
+    ));
+    assert!(matches!(
+        s.next_task(),
+        SchedulerTask::ValidationTask((0, 0), _)
+    ));
+    assert!(matches!(
+        s.next_task(),
+        SchedulerTask::ValidationTask((1, 0), _)
+    ));
+    assert!(matches!(
+        s.finish_execution(2, 0, true, TaskGuard::new(&fake_counter)),
+        SchedulerTask::NoTask
+    ));
+    assert!(matches!(
+        s.next_task(),
+        SchedulerTask::ValidationTask((2, 0), _)
+    ));
+
+    assert!(matches!(s.next_task(), SchedulerTask::Done));
+}
+
+#[test]
+fn scheduler_drain_idx() {
+    let s = Scheduler::new(5);
+    let fake_counter = AtomicUsize::new(0);
+
+    for i in 0..3 {
+        // not calling finish execution, so validation tasks not dispatched.
+        assert!(matches!(
+            s.next_task(),
+            SchedulerTask::ExecutionTask((j, 0), None, _) if j == i
+        ));
+    }
+    // 3 txns have already been scheduled, will finish at 3 despite stop idx 2.
+    s.set_stop_idx(2);
+
+    // Finish executions & dispatch validation tasks.
+    assert!(matches!(
+        s.finish_execution(0, 0, true, TaskGuard::new(&fake_counter)),
+        SchedulerTask::NoTask
+    ));
+    assert!(matches!(
+        s.finish_execution(1, 0, true, TaskGuard::new(&fake_counter)),
+        SchedulerTask::NoTask
+    ));
+    assert!(matches!(
+        s.next_task(),
+        SchedulerTask::ValidationTask((0, 0), _)
+    ));
+    assert!(matches!(
+        s.next_task(),
+        SchedulerTask::ValidationTask((1, 0), _)
+    ));
+    assert!(matches!(
+        s.finish_execution(2, 0, true, TaskGuard::new(&fake_counter)),
+        SchedulerTask::NoTask
+    ));
+    assert!(matches!(
+        s.next_task(),
+        SchedulerTask::ValidationTask((2, 0), _)
     ));
 
     assert!(matches!(s.next_task(), SchedulerTask::Done));

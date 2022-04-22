@@ -2,9 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::common::utils::{check_if_file_exists, write_to_file};
-use aptos_crypto::{x25519, ValidCryptoMaterial, ValidCryptoMaterialStringExt};
+use aptos_crypto::{
+    ed25519::{Ed25519PrivateKey, Ed25519PublicKey},
+    x25519, PrivateKey, ValidCryptoMaterial, ValidCryptoMaterialStringExt,
+};
+use aptos_logger::{debug, info};
+use aptos_types::transaction::authenticator::AuthenticationKey;
 use clap::{ArgEnum, Parser};
+use itertools::Itertools;
+use move_core_types::account_address::AccountAddress;
+use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fmt::Debug,
     path::{Path, PathBuf},
     str::FromStr,
@@ -27,6 +36,8 @@ pub enum Error {
     CommandArgumentError(String),
     #[error("Unable to load config: {0}")]
     ConfigError(String),
+    #[error("Unable to find config {0}, have you run `aptos init`?")]
+    ConfigNotFoundError(String),
     #[error("Error accessing '{0}': {1}")]
     IO(String, #[source] std::io::Error),
     #[error("Error (de)serializing '{0}': {1}")]
@@ -45,6 +56,69 @@ pub enum Error {
     UnexpectedError(String),
     #[error("Aborted command")]
     AbortedError,
+    #[error("Move compiliation failed: {0}")]
+    MoveCompiliationError(String),
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct CliConfig {
+    /// Private key for commands.  TODO: Add vault functionality
+    pub private_key: Option<Ed25519PrivateKey>,
+}
+
+impl CliConfig {
+    /// Checks if the config exists in the current working directory
+    pub fn config_exists() -> Result<bool, Error> {
+        Self::aptos_folder().map(|folder| folder.exists())
+    }
+
+    /// Loads the config from the current working directory
+    pub fn load() -> Result<Self, Error> {
+        let config_file = Self::aptos_folder()?.join("config.yml");
+        if !config_file.exists() {
+            return Err(Error::ConfigError(format!("{:?}", config_file)));
+        }
+
+        let bytes = std::fs::read(&config_file)
+            .map_err(|err| Error::IO(format!("Failed to read {:?}", config_file), err))?;
+        serde_yaml::from_slice(&bytes)
+            .map_err(|err| Error::UnableToParseFile(format!("{:?}", config_file), err.to_string()))
+    }
+
+    /// Saves the config to ./.aptos/config.yml
+    pub fn save(&self) -> Result<(), Error> {
+        let aptos_folder = Self::aptos_folder()?;
+
+        // Create if it doesn't exist
+        if !aptos_folder.exists() {
+            std::fs::create_dir(&aptos_folder).map_err(|err| {
+                Error::CommandArgumentError(format!(
+                    "Unable to create {:?} directory {}",
+                    aptos_folder, err
+                ))
+            })?;
+            info!("Created .aptos/ folder");
+        } else {
+            debug!(".aptos/ folder already initialized");
+        }
+
+        // Save over previous config file
+        // TODO: Ask for saving over?
+        let config_file = aptos_folder.join("config.yml");
+        let config_bytes = serde_yaml::to_string(&self)
+            .map_err(|err| Error::UnexpectedError(format!("Failed to serialize config {}", err)))?;
+        write_to_file(&config_file, "config.yml", config_bytes.as_bytes())?;
+        Ok(())
+    }
+
+    /// Finds the current directory's .aptos folder
+    fn aptos_folder() -> Result<PathBuf, Error> {
+        std::env::current_dir()
+            .map_err(|err| {
+                Error::UnexpectedError(format!("Unable to get current directory {}", err))
+            })
+            .map(|dir| dir.join(".aptos"))
+    }
 }
 
 /// Types of Keys used by the blockchain
@@ -154,42 +228,17 @@ pub struct EncodingOptions {
 }
 
 #[derive(Debug, Parser)]
-pub struct PrivateKeyInputOptions {
-    /// Private key input file name
-    #[clap(long, group = "key_input", parse(from_os_str))]
-    private_key_file: Option<PathBuf>,
-    /// Private key encoded in a type as shown in `encoding`
-    #[clap(long, group = "key_input")]
-    private_key: Option<String>,
-}
-
-impl PrivateKeyInputOptions {
-    pub fn extract_private_key(&self, encoding: EncodingType) -> Result<x25519::PrivateKey, Error> {
-        if let Some(ref file) = self.private_key_file {
-            encoding.load_key(file.as_path())
-        } else if let Some(ref key) = self.private_key {
-            let key = key.as_bytes().to_vec();
-            encoding.decode_key(key)
-        } else {
-            Err(Error::CommandArgumentError(
-                "One of ['--private-key', '--private-key-file'] must be used".to_string(),
-            ))
-        }
-    }
-}
-
-#[derive(Debug, Parser)]
 pub struct PublicKeyInputOptions {
-    /// Public key input file name.
-    #[clap(long, group = "key_input", parse(from_os_str))]
+    /// Public key input file name
+    #[clap(long, group = "public_key_input", parse(from_os_str))]
     public_key_file: Option<PathBuf>,
     /// Public key encoded in a type as shown in `encoding`
-    #[clap(long, group = "key_input")]
+    #[clap(long, group = "public_key_input")]
     public_key: Option<String>,
 }
 
-impl PublicKeyInputOptions {
-    pub fn extract_public_key(&self, encoding: EncodingType) -> Result<x25519::PublicKey, Error> {
+impl ExtractPublicKey for PublicKeyInputOptions {
+    fn extract_public_key(&self, encoding: EncodingType) -> Result<Ed25519PublicKey, Error> {
         if let Some(ref file) = self.public_key_file {
             encoding.load_key(file.as_path())
         } else if let Some(ref key) = self.public_key {
@@ -204,28 +253,56 @@ impl PublicKeyInputOptions {
 }
 
 #[derive(Debug, Parser)]
-pub struct KeyInputOptions {
-    #[clap(flatten)]
-    private_key_options: PrivateKeyInputOptions,
-    #[clap(flatten)]
-    public_key_options: PublicKeyInputOptions,
+pub struct PrivateKeyInputOptions {
+    /// Private key input file name
+    #[clap(long, group = "private_key_input", parse(from_os_str))]
+    private_key_file: Option<PathBuf>,
+    /// Private key encoded in a type as shown in `encoding`
+    #[clap(long, group = "private_key_input")]
+    private_key: Option<String>,
 }
 
-impl KeyInputOptions {
-    /// Extracts public key from either private or public key options
-    pub fn extract_public_key(&self, encoding: EncodingType) -> Result<x25519::PublicKey, Error> {
-        let private_key_result = self.private_key_options.extract_private_key(encoding);
-        let public_key_result = self.public_key_options.extract_public_key(encoding);
-
-        if let Ok(private_key) = private_key_result {
-            Ok(private_key.public_key())
-        } else if let Ok(public_key) = public_key_result {
-            Ok(public_key)
+impl PrivateKeyInputOptions {
+    pub fn extract_private_key(&self, encoding: EncodingType) -> Result<Ed25519PrivateKey, Error> {
+        if let Some(ref file) = self.private_key_file {
+            encoding.load_key(file.as_path())
+        } else if let Some(ref key) = self.private_key {
+            let key = key.as_bytes().to_vec();
+            encoding.decode_key(key)
+        } else if let Some(private_key) = CliConfig::load()?.private_key {
+            Ok(private_key)
         } else {
-            // TODO: merge above errors better
-            Err(Error::CommandArgumentError("One of ['--private-key', '--private-key-file', '--public-key', '--public-key-file'] must be used".to_string()))
+            Err(Error::CommandArgumentError(
+                "One of ['--private-key', '--private-key-file'] must be used".to_string(),
+            ))
         }
     }
+}
+
+impl ExtractPublicKey for PrivateKeyInputOptions {
+    fn extract_public_key(&self, encoding: EncodingType) -> Result<Ed25519PublicKey, Error> {
+        self.extract_private_key(encoding)
+            .map(|private_key| private_key.public_key())
+    }
+}
+
+pub trait ExtractPublicKey {
+    fn extract_public_key(&self, encoding: EncodingType) -> Result<Ed25519PublicKey, Error>;
+
+    fn extract_x25519_public_key(
+        &self,
+        encoding: EncodingType,
+    ) -> Result<x25519::PublicKey, Error> {
+        let key = self.extract_public_key(encoding)?;
+        x25519::PublicKey::from_ed25519_public_bytes(&key.to_bytes()).map_err(|err| {
+            Error::UnexpectedError(format!("Failed to convert ed25519 to x25519 {:?}", err))
+        })
+    }
+}
+
+pub fn account_address_from_public_key(public_key: &Ed25519PublicKey) -> AccountAddress {
+    let auth_key = AuthenticationKey::ed25519(public_key);
+    AccountAddress::new(*auth_key.derived_address())
 }
 
 #[derive(Debug, Parser)]
@@ -248,4 +325,70 @@ impl SaveFile {
     pub fn save_to_file(&self, name: &str, bytes: &[u8]) -> Result<(), Error> {
         write_to_file(self.output_file.as_path(), name, bytes)
     }
+}
+
+#[derive(Debug, Parser)]
+pub struct NodeOptions {
+    /// URL to a fullnode on the network
+    ///
+    /// Defaults to https://fullnode.devnet.aptoslabs.com
+    #[clap(
+        long,
+        parse(try_from_str),
+        default_value = "https://fullnode.devnet.aptoslabs.com"
+    )]
+    pub url: reqwest::Url,
+}
+
+/// Options for a move package dir
+#[derive(Debug, Parser)]
+pub struct MovePackageDir {
+    /// Path to a move package (the folder with a Move.toml file)
+    #[clap(long, parse(from_os_str))]
+    pub package_dir: PathBuf,
+    /// Path to save the compiled move package
+    ///
+    /// Defaults to `<package_dir>/build`
+    #[clap(long, parse(from_os_str))]
+    pub output_dir: Option<PathBuf>,
+    /// Named addresses for the move binary
+    ///
+    /// Example: alice=0x1234, bob=0x5678
+    ///
+    /// Note: This will fail if there are duplicates in the Move.toml file remove those first.
+    #[clap(long, parse(try_from_str = parse_map), default_value = "")]
+    pub named_addresses: BTreeMap<String, AccountAddress>,
+}
+
+const PARSE_MAP_SYNTAX_MSG: &str = "Invalid syntax for map.  Example: Name=Value,Name2=Value";
+
+/// Parses an inline map of values
+///
+/// Example: Name=Value,Name2=Value
+pub fn parse_map<K: FromStr + Ord, V: FromStr>(str: &str) -> anyhow::Result<BTreeMap<K, V>>
+where
+    K::Err: 'static + std::error::Error + Send + Sync,
+    V::Err: 'static + std::error::Error + Send + Sync,
+{
+    let mut map = BTreeMap::new();
+
+    // Split pairs by commas
+    for pair in str.split_terminator(',') {
+        // Split pairs by = then trim off any spacing
+        let (first, second): (&str, &str) = pair
+            .split_terminator('=')
+            .collect_tuple()
+            .ok_or_else(|| anyhow::Error::msg(PARSE_MAP_SYNTAX_MSG))?;
+        let first = first.trim();
+        let second = second.trim();
+        if first.is_empty() || second.is_empty() {
+            return Err(anyhow::Error::msg(PARSE_MAP_SYNTAX_MSG));
+        }
+
+        // At this point, we just give error messages appropriate to parsing
+        let key: K = K::from_str(first)?;
+        let value: V = V::from_str(second)?;
+        map.insert(key, value);
+    }
+    Ok(map)
 }

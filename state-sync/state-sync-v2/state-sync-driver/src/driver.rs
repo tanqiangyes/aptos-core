@@ -7,6 +7,7 @@ use crate::{
     driver_client::{ClientNotificationListener, DriverNotification},
     error::Error,
     logging::{LogEntry, LogSchema},
+    metrics,
     notification_handlers::{
         CommitNotification, CommitNotificationListener, CommittedAccounts, CommittedTransactions,
         ConsensusNotificationHandler, ErrorNotification, ErrorNotificationListener,
@@ -246,6 +247,7 @@ impl<
                 consensus_commit_notification.reconfiguration_events.len()
             ))
         );
+        self.update_consensus_commit_metrics(&consensus_commit_notification);
 
         // TODO(joshlind): can we get consensus to forward the events?
 
@@ -273,6 +275,30 @@ impl<
         self.check_sync_request_progress().await
     }
 
+    /// Updates the storage synchronizer metrics based on the consensus
+    /// commit notification.
+    fn update_consensus_commit_metrics(
+        &self,
+        consensus_commit_notification: &ConsensusCommitNotification,
+    ) {
+        metrics::increment_counter(
+            &metrics::DRIVER_COUNTERS,
+            metrics::DRIVER_CONSENSUS_COMMIT_NOTIFICATION,
+        );
+
+        let operations = [
+            metrics::StorageSynchronizerOperations::ExecutedTransactions,
+            metrics::StorageSynchronizerOperations::SyncedTransactions,
+        ];
+        for operation in operations {
+            metrics::increment_gauge(
+                &metrics::STORAGE_SYNCHRONIZER_OPERATIONS,
+                operation.get_label(),
+                consensus_commit_notification.transactions.len() as u64,
+            );
+        }
+    }
+
     /// Handles a consensus notification to sync to a specified target
     async fn handle_consensus_sync_notification(
         &mut self,
@@ -284,6 +310,10 @@ impl<
             "Received a consensus sync notification! Target version: {:?}. Latest synced version: {:?}",
             sync_notification.target, latest_synced_version,
             ))
+        );
+        metrics::increment_counter(
+            &metrics::DRIVER_COUNTERS,
+            metrics::DRIVER_CONSENSUS_SYNC_NOTIFICATION,
         );
 
         // Initialize a new sync request
@@ -298,6 +328,10 @@ impl<
     fn handle_client_notification(&mut self, notification: DriverNotification) {
         debug!(LogSchema::new(LogEntry::ClientNotification)
             .message("Received a notify bootstrap notification from the client!"));
+        metrics::increment_counter(
+            &metrics::DRIVER_COUNTERS,
+            metrics::DRIVER_CLIENT_NOTIFICATION,
+        );
 
         // TODO(joshlind): refactor this if the client only supports one notification type!
         // Extract the bootstrap notifier channel
@@ -387,14 +421,6 @@ impl<
                 .error(&error)
                 .message("Failed to handle a transaction commit notification!"));
         }
-
-        // Update the last commit timestamp for the sync request
-        let consensus_sync_request = self
-            .consensus_notification_handler
-            .get_consensus_sync_request();
-        if let Some(sync_request) = consensus_sync_request.lock().as_mut() {
-            sync_request.update_last_commit_timestamp()
-        };
     }
 
     /// Handles a notification sent by the storage synchronizer for committed accounts
@@ -557,11 +583,13 @@ impl<
                 error!(LogSchema::new(LogEntry::Driver)
                     .error(&error)
                     .message("Error found when driving progress of the continuous syncer!"));
+                metrics::increment_counter(&metrics::CONTINUOUS_SYNCER_ERRORS, error.get_label());
             }
         } else if let Err(error) = self.bootstrapper.drive_progress(&global_data_summary).await {
             error!(LogSchema::new(LogEntry::Driver)
                 .error(&error)
                 .message("Error found when checking the bootstrapper progress!"));
+            metrics::increment_counter(&metrics::BOOTSTRAPPER_ERRORS, error.get_label());
         };
     }
 }
