@@ -25,9 +25,11 @@ use std::{boxed::Box, sync::Arc};
 /// Ordering-only execution proxy
 /// implements StateComputer traits.
 /// Used only when node_config.validator.consensus.decoupled = true.
+/// 仅排序执行代理实现 StateComputer 特征。仅在 node_config.validator.consensus.decoupled = true 时使用
 pub struct OrderingStateComputer {
     // the channel to pour vectors of blocks into
     // the real execution phase (will be handled in ExecutionPhase).
+    // 接收区块向量的通道，实际执行在 ExecutionPhase 阶段
     executor_channel: UnboundedSender<OrderedBlocks>,
     state_computer_for_sync: Arc<dyn StateComputer>,
     reset_event_channel_tx: UnboundedSender<ResetRequest>,
@@ -65,6 +67,7 @@ impl StateComputer for OrderingStateComputer {
 
     /// Send ordered blocks to the real execution phase through the channel.
     /// A future is fulfilled right away when the blocks are sent into the channel.
+    /// 通过通道将有序块发送到真正的执行阶段。当块被发送到通道中时，未来会立即实现。
     async fn commit(
         &self,
         blocks: &[Arc<ExecutedBlock>],

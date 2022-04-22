@@ -21,13 +21,16 @@ use tokio::time::{sleep, timeout};
 const NO_TXN_DELAY: u64 = 30;
 
 /// Proxy interface to mempool
+/// 到内存池的代理接口
 #[derive(Clone)]
 pub struct MempoolProxy {
     consensus_to_mempool_sender: mpsc::Sender<ConsensusRequest>,
     poll_count: u64,
     /// Timeout for consensus to get an ack from mempool for executed transactions (in milliseconds)
+    /// 从内存池中获取执行交易确认的共识超时（以毫秒为单位）
     mempool_executed_txn_timeout_ms: u64,
     /// Timeout for consensus to pull transactions from mempool and get a response (in milliseconds)
+    /// 从内存池中提取交易并获得响应的共识超时（以毫秒为单位）
     mempool_txn_pull_timeout_ms: u64,
 }
 
@@ -58,12 +61,12 @@ impl MempoolProxy {
         let (callback, callback_rcv) = oneshot::channel();
         let req = ConsensusRequest::GetBlockRequest(max_size, exclude_txns.clone(), callback);
         // send to shared mempool
-        self.consensus_to_mempool_sender
+        self.consensus_to_mempool_sender//发送信息
             .clone()
             .try_send(req)
             .map_err(anyhow::Error::from)?;
         // wait for response
-        match monitor!(
+        match monitor!(//等待返回
             "pull_txn",
             timeout(
                 Duration::from_millis(self.mempool_txn_pull_timeout_ms),
@@ -97,7 +100,7 @@ impl TxnManager for MempoolProxy {
             Err(anyhow::anyhow!("Injected error in pull_txns").into())
         });
         let mut exclude_txns = vec![];
-        for payload in exclude_payloads {
+        for payload in exclude_payloads {//循环取出交易发送者和交易号
             for transaction in payload {
                 exclude_txns.push(TransactionSummary {
                     sender: transaction.sender(),
@@ -107,6 +110,7 @@ impl TxnManager for MempoolProxy {
         }
         let mut callback_wrapper = Some(wait_callback);
         // keep polling mempool until there's txn available or there's still pending txns
+        // 继续轮询内存池，直到有可用的 txn 或仍有待处理的 txn
         let mut count = self.poll_count;
         let txns = loop {
             count -= 1;
@@ -133,7 +137,7 @@ impl TxnManager for MempoolProxy {
         compute_results: &StateComputeResult,
     ) -> Result<(), MempoolError> {
         let mut rejected_txns = vec![];
-        let txns = match block.payload() {
+        let txns = match block.payload() {//取出块中的交易
             Some(txns) => txns,
             None => return Ok(()),
         };
@@ -158,12 +162,12 @@ impl TxnManager for MempoolProxy {
         let req = ConsensusRequest::RejectNotification(rejected_txns, callback);
 
         // send to shared mempool
-        self.consensus_to_mempool_sender
+        self.consensus_to_mempool_sender//通知这些交易被拒绝
             .clone()
             .try_send(req)
             .map_err(anyhow::Error::from)?;
 
-        if let Err(e) = monitor!(
+        if let Err(e) = monitor!(//等待回信
             "notify_mempool",
             timeout(
                 Duration::from_millis(self.mempool_executed_txn_timeout_ms),

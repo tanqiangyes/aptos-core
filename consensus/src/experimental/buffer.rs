@@ -17,6 +17,7 @@ pub type Cursor = Option<HashValue>;
 
 /// Buffer implementes an ordered dictionary
 /// It supports push_back, pop_front, and lookup by HashValue
+/// Buffer实现有序字典。支持push_back、pop_front、HashValue查找
 pub struct Buffer<T: Hashable> {
     map: HashMap<HashValue, LinkedItem<T>>,
     count: u64,

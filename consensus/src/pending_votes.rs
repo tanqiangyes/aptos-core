@@ -31,6 +31,7 @@ pub enum VoteReceptionResult {
     /// the given (proposal, execution) pair.
     VoteAdded(u64),
     /// The very same vote message has been processed in past.
+    /// 过去已处理过相同的投票消息
     DuplicateVote,
     /// The very same author has already voted for another proposal in this round (equivocation).
     EquivocateVote,
@@ -51,13 +52,18 @@ pub struct PendingVotes {
     /// Maps LedgerInfo digest to associated signatures (contained in a partial LedgerInfoWithSignatures).
     /// This might keep multiple LedgerInfos for the current round: either due to different proposals (byzantine behavior)
     /// or due to different NIL proposals (clients can have a different view of what block to extend).
+    /// 将 LedgerInfo 摘要映射到相关签名（包含在部分 LedgerInfoWithSignatures 中）。
+    /// 这可能会在当前轮次中保留多个 LedgerInfo：要么是由于不同的提案（拜占庭行为），要么是由于不同的 NIL 提案（客户可以对要扩展的区块有不同的看法）。
     li_digest_to_votes: HashMap<HashValue /* LedgerInfo digest */, LedgerInfoWithSignatures>,
     /// Tracks all the signatures of the votes for the given round. In case we succeed to
     /// aggregate 2f+1 signatures a TimeoutCertificate is formed.
+    /// 跟踪给定回合的所有投票签名。如果我们成功聚合了 2f+1 个签名，就会形成一个 TimeoutCertificate。
     maybe_partial_tc: Option<TimeoutCertificate>,
     /// Tracks all the signatures of the 2-chain timeout for the given round.
+    /// 跟踪给定回合的 2 链超时的所有签名。
     maybe_partial_2chain_tc: Option<TwoChainTimeoutCertificate>,
     /// Map of Author to vote. This is useful to discard multiple votes.
+    /// 投票的作者地图。这对于丢弃多张选票很有用。
     author_to_vote: HashMap<Author, Vote>,
 }
 
@@ -74,6 +80,7 @@ impl PendingVotes {
 
     /// Insert a vote and if the vote is valid, return a QuorumCertificate preferentially over a
     /// TimeoutCertificate if either can can be formed
+    /// 插入投票，如果投票有效，则返回 QuorumCertificate 优先于 TimeoutCertificate 如果可以形成任何一个
     pub fn insert_vote(
         &mut self,
         vote: &Vote,
@@ -84,18 +91,18 @@ impl PendingVotes {
 
         //
         // 1. Has the author already voted for this round?
-        //
+        // 是否已经投票过这一轮
 
         if let Some(previously_seen_vote) = self.author_to_vote.get(&vote.author()) {
             // is it the same vote?
-            if li_digest == previously_seen_vote.ledger_info().hash() {
+            if li_digest == previously_seen_vote.ledger_info().hash() {//投票数据是否相同，
                 // we've already seen an equivalent vote before
-                let new_timeout_vote = vote.is_timeout() && !previously_seen_vote.is_timeout();
+                let new_timeout_vote = vote.is_timeout() && !previously_seen_vote.is_timeout();//检查当前投票是否超时
                 if !new_timeout_vote {
                     // it's not a new timeout vote
                     return VoteReceptionResult::DuplicateVote;
                 }
-            } else {
+            } else {//双重投票，那肯定错了
                 // we have seen a different vote for the same round
                 error!(
                     SecurityEvent::ConsensusEquivocatingVote,
@@ -110,24 +117,27 @@ impl PendingVotes {
 
         //
         // 2. Store new vote (or update, in case it's a new timeout vote)
-        //
+        //存储新的投票，（或着更新，万一它是一个新的超时投票）
 
         self.author_to_vote.insert(vote.author(), vote.clone());
 
         //
         // 3. Let's check if we can create a QC
-        //
+        //检查是否可以创建一个qc
 
         // obtain the ledger info with signatures associated to the vote's ledger info
+        // 获取带有与投票账本信息相关的签名的账本信息
         let li_with_sig = self.li_digest_to_votes.entry(li_digest).or_insert_with(|| {
             // if the ledger info with signatures doesn't exist yet, create it
             LedgerInfoWithSignatures::new(vote.ledger_info().clone(), BTreeMap::new())
         });
 
         // add this vote to the ledger info with signatures
+        // 将此投票添加到带有签名的分类帐信息中
         li_with_sig.add_signature(vote.author(), vote.signature().clone());
 
         // check if we have enough signatures to create a QC
+        //检查是否已经满足创建一个qc的条件
         let voting_power =
             match validator_verifier.check_voting_power(li_with_sig.signatures().keys()) {
                 // a quorum of signature was reached, a new QC is formed
@@ -153,25 +163,26 @@ impl PendingVotes {
 
         //
         // 4. We couldn't form a QC, let's check if we can create a TC
-        //
+        // 我们生成不了qc，让我们检查下，我们是否可以创建一个tc
 
         if let Some(timeout_signature) = vote.timeout_signature() {
             // form timeout struct
             // TODO(mimoo): stronger: pass the (epoch, round) tuple as arguments of this function
-            let timeout = vote.generate_timeout();
+            let timeout = vote.generate_timeout();//获取超时投票数据（纪元和轮次）
 
             // if no partial TC exist, create one
+            // 如果不存在部分 TC，则创建一个
             let partial_tc = self
                 .maybe_partial_tc
                 .get_or_insert_with(|| TimeoutCertificate::new(timeout));
 
             // add the timeout signature
-            partial_tc.add_signature(vote.author(), timeout_signature.clone());
+            partial_tc.add_signature(vote.author(), timeout_signature.clone());//添加签名
 
             // did the TC reach a threshold?
             match validator_verifier.check_voting_power(partial_tc.signatures().keys()) {
                 // A quorum of signature was reached, a new TC was formed!
-                Ok(_) => {
+                Ok(_) => {//tc可以形成
                     return VoteReceptionResult::NewTimeoutCertificate(Arc::new(partial_tc.clone()))
                 }
 
@@ -190,11 +201,12 @@ impl PendingVotes {
         }
 
         // 4.1 process 2-chain timeout vote
+        // 同步2-chain timeout 投票
 
         if let Some((timeout, signature)) = vote.two_chain_timeout() {
             let partial_tc = self
                 .maybe_partial_2chain_tc
-                .get_or_insert_with(|| TwoChainTimeoutCertificate::new(timeout.clone()));
+                .get_or_insert_with(|| TwoChainTimeoutCertificate::new(timeout.clone()));//生成或着插入2chain超时
             partial_tc.add(vote.author(), timeout.clone(), signature.clone());
             match validator_verifier.check_voting_power(partial_tc.signers()) {
                 Ok(_) => {
@@ -215,7 +227,7 @@ impl PendingVotes {
 
         //
         // 5. No QC (or TC) could be formed, return the QC's voting power
-        //
+        // 5. 不能成立QC（或TC），归还QC的投票权
 
         VoteReceptionResult::VoteAdded(voting_power)
     }

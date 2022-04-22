@@ -136,6 +136,7 @@ impl Vote {
     }
 
     /// Returns the hash of the data represent by a timeout proposal
+    /// 返回由超时提议表示的数据的哈希值
     pub fn generate_timeout(&self) -> Timeout {
         Timeout::new(
             self.vote_data().proposed().epoch(),

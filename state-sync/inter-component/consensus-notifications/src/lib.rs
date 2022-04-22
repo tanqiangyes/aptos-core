@@ -33,9 +33,11 @@ pub enum Error {
 
 /// The interface between state sync and consensus, allowing consensus to send
 /// synchronization notifications to state sync.
+/// 状态同步和共识之间的接口，允许共识向状态同步发送同步通知。
 #[async_trait]
 pub trait ConsensusNotificationSender: Send + Sync {
     /// Notify state sync of newly committed transactions and reconfiguration events.
+    /// 通知新提交的事务和重新配置事件的状态同步
     async fn notify_new_commit(
         &self,
         transactions: Vec<Transaction>,
@@ -43,6 +45,7 @@ pub trait ConsensusNotificationSender: Send + Sync {
     ) -> Result<(), Error>;
 
     /// Notify state sync to synchronize storage to the specified target.
+    /// 通知状态同步以将存储同步到指定目标。
     async fn sync_to_target(&self, target: LedgerInfoWithSignatures) -> Result<(), Error>;
 }
 

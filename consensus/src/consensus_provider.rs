@@ -25,6 +25,7 @@ use storage_interface::DbReaderWriter;
 use tokio::runtime::{self, Runtime};
 
 /// Helper function to start consensus based on configuration and return the runtime
+/// 根据配置启动共识并返回运行时的辅助函数
 pub fn start_consensus(
     node_config: &NodeConfig,
     mut network_sender: ConsensusNetworkSender,
@@ -40,28 +41,28 @@ pub fn start_consensus(
         .enable_all()
         .build()
         .expect("Failed to create Tokio runtime!");
-    let storage = Arc::new(StorageWriteProxy::new(node_config, aptos_db.reader.clone()));
-    let txn_manager = Arc::new(MempoolProxy::new(
+    let storage = Arc::new(StorageWriteProxy::new(node_config, aptos_db.reader.clone()));//生成存储写入的接口
+    let txn_manager = Arc::new(MempoolProxy::new( //跟mempool交互的模块
         consensus_to_mempool_sender,
         node_config.consensus.mempool_poll_count,
         node_config.consensus.mempool_txn_pull_timeout_ms,
         node_config.consensus.mempool_executed_txn_timeout_ms,
     ));
 
-    let state_computer = Arc::new(ExecutionProxy::new(
+    let state_computer = Arc::new(ExecutionProxy::new(//区块执行和提交
         Box::new(BlockExecutor::<AptosVM>::new(aptos_db)),
         txn_manager.clone(),
         state_sync_notifier,
         runtime.handle(),
     ));
 
-    let time_service = Arc::new(ClockTimeService::new(runtime.handle().clone()));
+    let time_service = Arc::new(ClockTimeService::new(runtime.handle().clone()));//时间服务器
 
     let (timeout_sender, timeout_receiver) = channel::new(1_024, &counters::PENDING_ROUND_TIMEOUTS);
     let (self_sender, self_receiver) = channel::new(1_024, &counters::PENDING_SELF_MESSAGES);
-    network_sender.initialize(peer_metadata_storage);
+    network_sender.initialize(peer_metadata_storage);//网络初始化
 
-    let epoch_mgr = EpochManager::new(
+    let epoch_mgr = EpochManager::new(//轮次管理器
         node_config,
         time_service,
         self_sender,

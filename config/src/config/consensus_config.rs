@@ -59,14 +59,18 @@ impl ConsensusConfig {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum ConsensusProposerType {
     // Choose the smallest PeerId as the proposer
+    // 选择最小的 PeerId 作为提议者
     FixedProposer,
     // Round robin rotation of proposers
+    // 提议者的循环轮换
     RotatingProposer,
     // Committed history based proposer election
+    // 基于承诺历史的提议者选举
     LeaderReputation(LeaderReputationConfig),
     // Pre-specified proposers for each round,
     // or default proposer if round proposer not
     // specified
+    // 每轮预先指定的提议者，如果未指定轮次提议者，则为默认提议者
     RoundProposer(HashMap<Round, AccountAddress>),
 }
 

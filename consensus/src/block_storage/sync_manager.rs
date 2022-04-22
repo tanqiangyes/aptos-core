@@ -30,6 +30,7 @@ use std::{clone::Clone, cmp::min, sync::Arc, time::Duration};
 
 #[derive(Debug, PartialEq)]
 /// Whether we need to do block retrieval if we want to insert a Quorum Cert.
+/// 如果要插入 Quorum Cert，是否需要进行块检索。
 pub enum NeedFetchResult {
     QCRoundBeforeRoot,
     QCAlreadyExist,
@@ -40,12 +41,14 @@ pub enum NeedFetchResult {
 impl BlockStore {
     /// Check if we're far away from this ledger info and need to sync.
     /// This ensures that the block referred by the ledger info is not in buffer manager.
+    /// 检查我们是否远离此分类帐信息并需要同步。这确保了分类帐信息引用的块不在缓冲区管理器中
     pub fn need_sync_for_ledger_info(&self, li: &LedgerInfoWithSignatures) -> bool {
         self.ordered_root().round() + self.back_pressure_limit < li.commit_info().round()
     }
 
     /// Checks if quorum certificate can be inserted in block store without RPC
     /// Returns the enum to indicate the detailed status.
+    /// 检查是否可以在没有 RPC 的情况下将仲裁证书插入块存储中返回枚举以指示详细状态。
     pub fn need_fetch_for_quorum_cert(&self, qc: &QuorumCert) -> NeedFetchResult {
         if qc.certified_block().round() < self.ordered_root().round() {
             return NeedFetchResult::QCRoundBeforeRoot;
@@ -65,14 +68,16 @@ impl BlockStore {
     /// Fetches dependencies for given sync_info.quorum_cert
     /// If gap is large, performs state sync using sync_to_highest_ordered_cert
     /// Inserts sync_info.quorum_cert into block store as the last step
+    /// 获取给定 sync_info.quorum_cert 的依赖关系 如果差距很大，
+    /// 则使用 sync_to_highest_ordered_cert 执行状态同步 将 sync_info.quorum_cert 作为最后一步插入块存储
     pub async fn add_certs(
         &self,
         sync_info: &SyncInfo,
         mut retriever: BlockRetriever,
     ) -> anyhow::Result<()> {
         self.sync_to_highest_commit_cert(sync_info.highest_ledger_info(), &retriever.network)
-            .await;
-        self.sync_to_highest_ordered_cert(
+            .await;//同步到最高的证明
+        self.sync_to_highest_ordered_cert(//差距太大，直接同步到对应的状态
             sync_info.highest_ordered_cert().clone(),
             sync_info.highest_ledger_info().clone(),
             &mut retriever,
@@ -161,6 +166,10 @@ impl BlockStore {
     /// 2. We persist the gap blocks to storage before start sync to ensure we could restart if we
     /// crash in the middle of the sync.
     /// 3. We prune the old tree and replace with a new tree built with the 3-chain.
+    /// 检查对等方发送的最高顺序的证书，看看我们是否落后，如果提交的块在我们的树中不存在，则开始快进同步。它的工作原理如下：
+    /// 1、从对等方请求间隙块（从最高分类信息到最高排序证书）
+    /// 2、我们在开始同步之前将间隙块保存到存储中，以确保如果我们在同步过程中崩溃，我们可以重新启动。
+    /// 3、我们修剪旧树并替换为使用 3 链构建的新树。
     async fn sync_to_highest_ordered_cert(
         &self,
         highest_ordered_cert: QuorumCert,

@@ -22,6 +22,7 @@ use futures::channel::mpsc::UnboundedReceiver;
 use std::sync::Arc;
 
 /// build channels and return phases and buffer manager
+/// 建立通道和返回阶段和缓冲区管理器
 pub fn prepare_phases_and_buffer_manager(
     author: Author,
     execution_proxy: Arc<dyn StateComputer>,

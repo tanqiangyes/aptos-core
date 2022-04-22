@@ -64,6 +64,7 @@ pub fn create_channel<T>() -> (Sender<T>, Receiver<T>) {
 /// BufferManager handles the states of ordered blocks and
 /// interacts with the execution phase, the signing phase, and
 /// the persisting phase.
+/// BufferManager 处理有序块的状态，并与执行阶段、签名阶段和持久化阶段进行交互
 pub struct BufferManager {
     author: Author,
 
@@ -71,6 +72,7 @@ pub struct BufferManager {
 
     // the roots point to the first *unprocessed* item.
     // None means no items ready to be processed (either all processed or no item finishes previous stage)
+    // 根指向第一个未处理的项目。None表示没有准备好处理的项目（全部处理或没有项目完成前一阶段）
     execution_root: BufferItemRootType,
     execution_phase_tx: Sender<ExecutionRequest>,
     execution_phase_rx: Receiver<ExecutionResponse>,
@@ -136,6 +138,7 @@ impl BufferManager {
 
     /// process incoming ordered blocks
     /// push them into the buffer and update the roots if they are none.
+    /// 第一步
     fn process_ordered_blocks(&mut self, ordered_blocks: OrderedBlocks) {
         let OrderedBlocks {
             ordered_blocks,
@@ -150,6 +153,7 @@ impl BufferManager {
 
     /// Set the execution root to the first not executed item (Ordered) and send execution request
     /// Set to None if not exist
+    /// 第二步
     async fn advance_execution_root(&mut self) {
         let cursor = self.execution_root.or_else(|| *self.buffer.head_cursor());
         self.execution_root = self.buffer.find_elem_from(cursor, |item| item.is_ordered());
@@ -192,6 +196,7 @@ impl BufferManager {
 
     /// Pop the prefix of buffer items until (including) target_block_id
     /// Send persist request.
+    /// 弹出缓冲区项的前缀，直到（包括） target_block_id 发送持久化请求。
     async fn advance_head(&mut self, target_block_id: HashValue) {
         let mut blocks_to_persist: Vec<Arc<ExecutedBlock>> = vec![];
 
@@ -331,6 +336,7 @@ impl BufferManager {
     /// process the commit vote messages
     /// it scans the whole buffer for a matching blockinfo
     /// if found, try advancing the item to be aggregated
+    /// 处理提交投票消息它扫描整个缓冲区以查找匹配的块信息，如果找到，尝试推进要聚合的项目
     fn process_commit_message(&mut self, commit_msg: VerifiedEvent) -> Option<HashValue> {
         match commit_msg {
             VerifiedEvent::CommitVote(vote) => {

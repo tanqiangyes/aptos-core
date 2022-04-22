@@ -78,7 +78,7 @@ pub fn update_counters_for_committed_blocks(blocks_to_commit: &[Arc<ExecutedBloc
 /// Responsible for maintaining all the blocks of payload and the dependencies of those blocks
 /// (parent and previous QC links).  It is expected to be accessed concurrently by multiple threads
 /// and is thread-safe.
-///
+/// 负责维护所有有效载荷块以及这些块的依赖关系（父级和之前的 QC 链接）。它预计将被多个线程同时访问，并且是线程安全的。
 /// Example tree block structure based on parent links.
 ///                         ╭--> A3
 /// Genesis--> B0--> B1--> B2--> B3
@@ -96,13 +96,14 @@ pub struct BlockStore {
     state_computer: Arc<dyn StateComputer>,
     /// The persistent storage backing up the in-memory data structure, every write should go
     /// through this before in-memory tree.
+    /// 备份内存数据结构的持久存储，每次写入都应该在内存树之前经过这个
     storage: Arc<dyn PersistentLivenessStorage>,
     /// Used to ensure that any block stored will have a timestamp < the local time
+    /// 用于确保存储的任何块的时间戳<本地时间
     time_service: Arc<dyn TimeService>,
     // consistent with round type
     back_pressure_limit: Round,
 }
-
 impl BlockStore {
     pub fn new(
         storage: Arc<dyn PersistentLivenessStorage>,
@@ -243,9 +244,9 @@ impl BlockStore {
 
     /// Commit the given block id with the proof, returns () on success or error
     pub async fn commit(&self, finality_proof: LedgerInfoWithSignatures) -> anyhow::Result<()> {
-        let block_id_to_commit = finality_proof.ledger_info().consensus_block_id();
+        let block_id_to_commit = finality_proof.ledger_info().consensus_block_id(); //获取执行块的hash
         let block_to_commit = self
-            .get_block(block_id_to_commit)
+            .get_block(block_id_to_commit)//获取需要执行的块的内容
             .ok_or_else(|| format_err!("Committed block id not found"))?;
 
         // First make sure that this commit is new.
@@ -255,7 +256,7 @@ impl BlockStore {
         );
 
         let blocks_to_commit = self
-            .path_from_ordered_root(block_id_to_commit)
+            .path_from_ordered_root(block_id_to_commit)//获取执行块到跟的路径
             .unwrap_or_default();
 
         assert!(!blocks_to_commit.is_empty());
@@ -337,11 +338,13 @@ impl BlockStore {
     /// Duplicate inserts will return the previously inserted block (
     /// note that it is considered a valid non-error case, for example, it can happen if a validator
     /// receives a certificate for a block that is currently being added).
+    /// 如果它通过所有验证测试，则执行并插入一个块。将 Arc 持久化到存储后，将 Arc 返回到保存在块存储中的块。此函数假定祖先存在（否则返回 MissingParent）。
+    /// 重复插入将返回先前插入的块（请注意，它被认为是有效的非错误情况，例如，如果验证器收到当前正在添加的块的证书，则可能发生这种情况）
     pub async fn execute_and_insert_block(
         &self,
         block: Block,
     ) -> anyhow::Result<Arc<ExecutedBlock>> {
-        if let Some(existing_block) = self.get_block(block.id()) {
+        if let Some(existing_block) = self.get_block(block.id()) {//先获取区块数据
             return Ok(existing_block);
         }
         ensure!(
@@ -351,7 +354,7 @@ impl BlockStore {
 
         let executed_block = match self.execute_block(block.clone()).await {
             Ok(res) => Ok(res),
-            Err(Error::BlockNotFound(parent_block_id)) => {
+            Err(Error::BlockNotFound(parent_block_id)) => {//区块没找到，就重新查一次路径，然后挨个执行一遍
                 // recover the block tree in executor
                 let blocks_to_reexecute = self
                     .path_from_ordered_root(parent_block_id)

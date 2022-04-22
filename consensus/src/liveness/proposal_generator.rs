@@ -29,6 +29,9 @@ mod proposal_generator_test;
 ///
 /// TxnManager should be aware of the pending transactions in the branch that it is extending,
 /// such that it will filter them out to avoid transaction duplication.
+/// ProposalGenerator 负责按需生成提议的块：它通常由认为它是在给定轮次中充当提议者的有效候选人的验证者使用。 ProposalGenerator 是选择要扩展的分支：
+/// round 由调用者给出（通常由 RoundState 确定）。提议区块的交易由 TxnManager 交付。
+/// TxnManager 应该知道它正在扩展的分支中的待处理事务，以便将它们过滤掉以避免事务重复。
 pub struct ProposalGenerator {
     // The account address of this validator
     author: Author,
@@ -83,6 +86,11 @@ impl ProposalGenerator {
     /// 2. The round is provided by the caller.
     /// 3. In case a given round is not greater than the calculated parent, return an OldRound
     /// error.
+    /// 该函数生成一个新的提议块：当 TxnManager 实现传递有效负载时，返回的未来得到满足。每轮最多可以生成一个提案（不允许提案模棱两可）。
+    /// TxnManager 实现返回的错误会传播给调用者。选择要扩展的分支的逻辑如下：
+    /// 1、该函数从块树中获取单链的最高头部。新提案必须扩展 hqc 以确保乐观的响应能力。
+    /// 2、该回合由调用者提供。
+    /// 3、如果给定轮数不大于计算的父轮，则返回 OldRound 错误。
     pub async fn generate_proposal(
         &mut self,
         round: Round,
@@ -102,20 +110,24 @@ impl ProposalGenerator {
         let (payload, timestamp) = if hqc.certified_block().has_reconfiguration() {
             // Reconfiguration rule - we propose empty blocks with parents' timestamp
             // after reconfiguration until it's committed
+            // 重新配置规则 - 我们在重新配置后建议带有父时间戳的空块，直到它被提交
             (vec![], hqc.certified_block().timestamp_usecs())
         } else {
             // One needs to hold the blocks with the references to the payloads while get_block is
             // being executed: pending blocks vector keeps all the pending ancestors of the extended branch.
+            // 在执行 get_block 时，需要保存具有对有效负载的引用的块：挂起的块向量保留扩展分支的所有挂起的祖先。
             let mut pending_blocks = self
                 .block_store
                 .path_from_commit_root(hqc.certified_block().id())
                 .ok_or_else(|| format_err!("HQC {} already pruned", hqc.certified_block().id()))?;
             // Avoid txn manager long poll if the root block has txns, so that the leader can
             // deliver the commit proof to others without delay.
+            // 如果根块有 txns，则避免 txn manager 长轮询，以便领导者可以立即将提交证明传递给其他人。
             pending_blocks.push(self.block_store.commit_root());
 
             // Exclude all the pending transactions: these are all the ancestors of
             // parent (including) up to the root (including).
+            // 排除所有未决交易：这些是父（包括）的所有祖先，直到根（包括）。
             let exclude_payload: Vec<&Vec<_>> = pending_blocks
                 .iter()
                 .flat_map(|block| block.payload())
@@ -131,6 +143,7 @@ impl ProposalGenerator {
             // All proposed blocks in a branch are guaranteed to have increasing timestamps
             // since their predecessor block will not be added to the BlockStore until
             // the local time exceeds it.
+            // 分支中的所有提议块都保证具有增加的时间戳，因为在本地时间超过它之前，它们的前一个块不会被添加到 BlockStore。
             let timestamp = self.time_service.get_current_timestamp();
 
             let payload = self

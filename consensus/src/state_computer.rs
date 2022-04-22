@@ -28,6 +28,7 @@ type NotificationType = (
 
 /// Basic communication with the Execution module;
 /// implements StateComputer traits.
+/// 与执行模块的基本通信；实现 StateComputer 特征。
 pub struct ExecutionProxy {
     executor: Box<dyn BlockExecutorTrait>,
     mempool_notifier: Arc<dyn TxnManager>,
@@ -109,6 +110,7 @@ impl StateComputer for ExecutionProxy {
     }
 
     /// Send a successful commit. A future is fulfilled when the state is finalized.
+    /// 发送成功的提交。当状态最终确定时，未来就实现了。
     async fn commit(
         &self,
         blocks: &[Arc<ExecutedBlock>],
@@ -145,6 +147,7 @@ impl StateComputer for ExecutionProxy {
     }
 
     /// Synchronize to a commit that not present locally.
+    /// 同步到本地不存在的提交
     async fn sync_to(&self, target: LedgerInfoWithSignatures) -> Result<(), StateSyncError> {
         fail_point!("consensus::sync_to", |_| {
             Err(anyhow::anyhow!("Injected error in sync_to").into())
@@ -154,12 +157,15 @@ impl StateComputer for ExecutionProxy {
         // commitments, the the sync state of ChunkExecutor may be not up to date so
         // it is required to reset the cache of ChunkExecutor in State Sync
         // when requested to sync.
+        // 这里开始做状态同步，里面的 ChunkExecutor 会处理 chunks 并提交到 Storage。
+        // 但是，在块执行和提交之后，ChunkExecutor 的同步状态可能不是最新的，因此需要在请求同步时重置 State Sync 中的 ChunkExecutor 缓存。
         let res = monitor!(
             "sync_to",
             self.state_sync_notifier.sync_to_target(target).await
         );
         // Similarily, after the state synchronization, we have to reset the cache
         // of BlockExecutor to guarantee the latest committed state is up to date.
+        // 同样，在状态同步后，我们必须重置 Block Executor 的缓存，以保证最新提交的状态是最新的。
         self.executor.reset()?;
 
         res.map_err(|error| {

@@ -16,7 +16,7 @@ use std::{
 /// ExecutionPhase is a singleton that receives ordered blocks from
 /// the buffer manager and execute them. After the execution is done,
 /// ExecutionPhase sends the ordered blocks back to the buffer manager.
-///
+/// [ 当consensus.decoupled = true 时使用此类] ExecutionPhase 是一个单例，它从缓冲区管理器接收有序块并执行它们。执行完成后，ExecutionPhase 将有序块发送回缓冲区管理器
 
 pub struct ExecutionRequest {
     pub ordered_blocks: Vec<ExecutedBlock>,

@@ -96,6 +96,7 @@ where
 }
 
 /// TimeService implementation that uses actual clock to schedule tasks
+/// 使用实际时钟来安排任务的 TimeService 实现
 pub struct ClockTimeService {
     executor: Handle,
 }

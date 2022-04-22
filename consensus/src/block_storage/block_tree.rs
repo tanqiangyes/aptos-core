@@ -23,6 +23,7 @@ use std::{
 
 /// This structure is a wrapper of [`ExecutedBlock`](crate::consensus_types::block::ExecutedBlock)
 /// that adds `children` field to know the parent-child relationship between blocks.
+/// 该结构体是 [`ExecutedBlock`](crate::consensus_types::block::ExecutedBlock) 的包装器，它添加了 `children` 字段以了解块之间的父子关系
 struct LinkableBlock {
     /// Executed block that has raw block data and execution output.
     executed_block: Arc<ExecutedBlock>,
@@ -64,6 +65,7 @@ impl LinkableBlock {
 /// This structure maintains a consistent block tree of parent and children links. Blocks contain
 /// parent links and are immutable.  For all parent links, a child link exists. This structure
 /// should only be used internally in BlockStore.
+/// 此结构维护父子链接的一致块树。块包含父链接并且是不可变的。对于所有父链接，都存在一个子链接。这种结构只能在 BlockStore 内部使用。
 pub struct BlockTree {
     /// All the blocks known to this replica (with parent links)
     id_to_block: HashMap<HashValue, LinkableBlock>,

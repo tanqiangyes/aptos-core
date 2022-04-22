@@ -225,6 +225,7 @@ impl ValidatorVerifier {
     /// Ensure there is at least quorum_voting_power in the provided signatures and there
     /// are only known authors. According to the threshold verification policy,
     /// invalid public keys are not allowed.
+    /// 确保提供的签名中至少有 quorum_voting_power 并且只有已知作者。根据阈值验证政策，不允许使用无效的公钥。
     pub fn check_voting_power<'a>(
         &self,
         authors: impl Iterator<Item = &'a AccountAddress>,

@@ -14,6 +14,7 @@ use serde::Serialize;
 use std::{fmt, sync::Arc, time::Duration};
 
 /// A reason for starting a new round: introduced for monitoring / debug purposes.
+/// 开始新一轮的原因：引入用于监控/调试目的
 #[derive(Serialize, Eq, Debug, PartialEq)]
 pub enum NewRoundReason {
     QCReady,
@@ -33,6 +34,8 @@ impl fmt::Display for NewRoundReason {
 /// NewRoundEvents are consumed by the rest of the system: they can cause sending new proposals
 /// or voting for some proposals that wouldn't have been voted otherwise.
 /// The duration is populated for debugging and testing
+/// RoundState 产生的 NewRoundEvents 保证单调递增。
+/// NewRoundEvents 被系统的其余部分使用：它们可以导致发送新提案或为一些本来不会被投票的提案投票。为调试和测试填充持续时间
 #[derive(Debug, PartialEq, Eq)]
 pub struct NewRoundEvent {
     pub round: Round,
@@ -52,6 +55,7 @@ impl fmt::Display for NewRoundEvent {
 
 /// Determines the maximum round duration based on the round difference between the current
 /// round and the committed round
+/// 根据当前轮次和已提交轮次之间的轮次差异确定最大轮次持续时间
 pub trait RoundTimeInterval: Send + Sync + 'static {
     /// Use the index of the round after the highest quorum certificate to commit a block and
     /// return the duration for this round
@@ -62,23 +66,35 @@ pub trait RoundTimeInterval: Send + Sync + 'static {
     /// 3-chain rule for commits, so round 1 has round index 0.  For example, if one wants
     /// to calculate the round duration of round 6 and the highest committed round is 3 (meaning
     /// the highest round to commit a block is round 5, then the round index is 0.
+    /// 使用最高法定人数证书之后的轮索引来提交一个块并返回该轮的持续时间
+    /// 轮次索引从 0 开始（轮次索引 = 0 是导致最高承诺轮次的轮次之后的第一轮）。鉴于第 r 轮是提交区块的最高轮，则第 0 轮是第 r+1 轮。
+    /// 请注意，对于 genesis 不遵循提交的 3 链规则，因此第 1 轮的轮索引为 0。
+    /// 例如，如果要计算第 6 轮的轮持续时间，最高提交的轮是 3（意味着最高轮到提交一个块是第 5 轮，然后轮索引为 0
     fn get_round_duration(&self, round_index_after_committed_qc: usize) -> Duration;
 }
 
 /// Round durations increase exponentially
 /// Basically time interval is base * mul^power
 /// Where power=max(rounds_since_qc, max_exponent)
+/// 回合持续时间呈指数增长
+/// 基本上时间间隔是基础 mul^power
+/// 其中 power=max(rounds_since_qc, max_exponent)
 #[derive(Clone)]
 pub struct ExponentialTimeInterval {
     // Initial time interval duration after a successful quorum commit.
+    // 成功qc后的初始时间间隔持续时间。
     base_ms: u64,
     // By how much we increase interval every time
+    // 我们每次增加多少间隔
     exponent_base: f64,
     // Maximum time interval won't exceed base * mul^max_pow.
     // Theoretically, setting it means
     // that we rely on synchrony assumptions when the known max messaging delay is
     // max_interval.  Alternatively, we can consider using max_interval to meet partial synchrony
     // assumptions where while delta is unknown, it is <= max_interval.
+    // 最大时间间隔不会超过基本 mul^max_pow。
+    // 从理论上讲，设置它意味着当已知的最大消息延迟为 max_interval 时，我们依赖于同步假设。
+    // 或者，我们可以考虑使用 max_interval 来满足部分同步假设，其中虽然 delta 未知，但它 <= max_interval。
     max_exponent: usize,
 }
 
@@ -106,6 +122,7 @@ impl ExponentialTimeInterval {
 }
 
 impl RoundTimeInterval for ExponentialTimeInterval {
+    // (exponent_base ^ min(round, max_exponent)) * base_ms
     fn get_round_duration(&self, round_index_after_committed_qc: usize) -> Duration {
         let pow = round_index_after_committed_qc.min(self.max_exponent) as u32;
         let base_multiplier = self.exponent_base.powf(f64::from(pow));
@@ -128,19 +145,31 @@ impl RoundTimeInterval for ExponentialTimeInterval {
 ///
 /// Whenever a new round starts a local timeout is set following the round interval. This local
 /// timeout is going to send the timeout events once in interval until the new round starts.
+/// `RoundState` 包含有关特定回合的信息，并在收到新证书时向前移动。
+/// 一轮“r”在以下情况下开始：
+///     轮“r-1”有一个 QuorumCert，
+///     “r-1”轮有一个 TimeoutCertificate。
+/// 轮次间隔计算是 RoundStateTimeoutInterval trait 的职责。
+/// 它取决于当前轮次和最高提交轮次之间的增量（直觉是，我们希望当前轮次距离上一次提交轮次越远，我们希望以指数方式增长间隔）。
+/// 每当新一轮开始时，都会在轮次间隔之后设置本地超时。此本地超时将每隔一段时间发送一次超时事件，直到新一轮开始。
 pub struct RoundState {
     // Determines the time interval for a round given the number of non-committed rounds since
     // last commit.
+    // 在给定自上次提交以来未提交的轮数的情况下确定一轮的时间间隔
     time_interval: Box<dyn RoundTimeInterval>,
     // Highest known committed round as reported by the caller. The caller might choose not to
     // inform the RoundState about certain committed rounds (e.g., NIL blocks): in this case the
     // committed round in RoundState might lag behind the committed round of a block tree.
+    // 调用者报告的已知最高已提交回合。调用者可能选择不通知 RoundState 某些已提交的轮次（例如，NIL 块）：
+    // 在这种情况下，RoundState 中的已提交轮次可能落后于块树的已提交轮次。
     highest_committed_round: Round,
     // Current round is max{highest_qc, highest_tc} + 1.
+    // 当前轮是 max（qc， tc） + 1
     current_round: Round,
     // The deadline for the next local timeout event. It is reset every time a new round start, or
     // a previous deadline expires.
     // Represents as Duration since UNIX_EPOCH.
+    // 下一个本地超时事件的截止日期。每次新一轮开始或前一个截止日期到期时都会重置。表示为自 UNIX_EPOCH 以来的持续时间。
     current_round_deadline: Duration,
     // Service for timer
     time_service: Arc<dyn TimeService>,
@@ -237,6 +266,7 @@ impl RoundState {
             let timeout = self.setup_timeout();
             // The new round reason is QCReady in case both QC.round + 1 == new_round, otherwise
             // it's Timeout and TC.round + 1 == new_round.
+            // 判断新一轮的原因，比如qc.round + 1 = new_round;或着tc.round + 1 = new_round
             let new_round_reason = if sync_info.highest_certified_round() + 1 == new_round {
                 NewRoundReason::QCReady
             } else {
@@ -279,6 +309,7 @@ impl RoundState {
     }
 
     /// Setup the timeout task and return the duration of the current timeout
+    /// 设置超时任务并返回当前超时的持续时间
     fn setup_timeout(&mut self) -> Duration {
         let timeout_sender = self.timeout_sender.clone();
         let timeout = self.setup_deadline();
@@ -297,6 +328,7 @@ impl RoundState {
     }
 
     /// Setup the current round deadline and return the duration of the current round
+    /// 设置当前回合截止日期并返回当前回合的持续时间
     fn setup_deadline(&mut self) -> Duration {
         let round_index_after_committed_round = {
             if self.highest_committed_round == 0 {

@@ -78,6 +78,7 @@ impl LivenessStorageData {
 
 // Manager the components that shared across epoch and spawn per-epoch RoundManager with
 // epoch-specific input.
+// 管理跨 epoch 共享的组件，并使用特定于 epoch 的输入生成 per-epoch RoundManager。
 pub struct EpochManager {
     author: Author,
     config: ConsensusConfig,
@@ -152,6 +153,7 @@ impl EpochManager {
     ) -> RoundState {
         // 1.5^6 ~= 11
         // Timeout goes from initial_timeout to initial_timeout*11 in 6 steps
+        // 超时从 initial_timeout 到 initial_timeout11 分 6 步
         let time_interval = Box::new(ExponentialTimeInterval::new(
             Duration::from_millis(self.config.round_initial_timeout_ms),
             1.2,
@@ -161,6 +163,7 @@ impl EpochManager {
     }
 
     /// Create a proposer election handler based on proposers
+    /// 根据提议者创建提议者选举处理程序
     fn create_proposer_election(
         &self,
         epoch_state: &EpochState,
@@ -188,7 +191,7 @@ impl EpochManager {
                     proposers.len(),
                     self.storage.aptos_db(),
                 ));
-                let heuristic = Box::new(ActiveInactiveHeuristic::new(
+                let heuristic = Box::new(ActiveInactiveHeuristic::new(//获取表现
                     self.author,
                     heuristic_config.active_weights,
                     heuristic_config.inactive_weights,
@@ -300,20 +303,21 @@ impl EpochManager {
 
     /// this function spawns the phases and a buffer manager
     /// it sets `self.commit_msg_tx` to a new aptos_channel::Sender and returns an OrderingStateComputer
+    /// 此函数生成阶段和缓冲区管理器，它将 `self.commit_msg_tx` 设置为新的 aptos_channel::Sender 并返回 OrderingStateComputer
     fn spawn_decoupled_execution(
         &mut self,
         safety_rules_container: Arc<Mutex<MetricsSafetyRules>>,
         verifier: ValidatorVerifier,
     ) -> OrderingStateComputer {
-        let network_sender = NetworkSender::new(
+        let network_sender = NetworkSender::new(//网络发送者
             self.author,
             self.network_sender.clone(),
             self.self_sender.clone(),
             verifier.clone(),
         );
 
-        let (block_tx, block_rx) = unbounded::<OrderedBlocks>();
-        let (reset_tx, reset_rx) = unbounded::<ResetRequest>();
+        let (block_tx, block_rx) = unbounded::<OrderedBlocks>();//区块包装
+        let (reset_tx, reset_rx) = unbounded::<ResetRequest>();//停止请求
 
         let (commit_msg_tx, commit_msg_rx) = aptos_channel::new::<AccountAddress, VerifiedEvent>(
             QueueStyle::FIFO,
@@ -336,7 +340,7 @@ impl EpochManager {
                 reset_rx,
                 verifier,
             );
-
+        //这里启动同步需要的4步
         tokio::spawn(execution_phase.start());
         tokio::spawn(signing_phase.start());
         tokio::spawn(persisting_phase.start());
@@ -346,7 +350,7 @@ impl EpochManager {
     }
 
     async fn shutdown_current_processor(&mut self) {
-        if self.round_manager_tx.is_some() {
+        if self.round_manager_tx.is_some() {//停止
             // Release the previous RoundManager, especially the SafetyRule client
             let (ack_tx, ack_rx) = oneshot::channel();
             let event = VerifiedEvent::Shutdown(ack_tx);
@@ -358,7 +362,7 @@ impl EpochManager {
         self.round_manager_tx = None;
 
         // Shutdown the previous buffer manager, to release the SafetyRule client
-        self.buffer_manager_msg_tx = None;
+        self.buffer_manager_msg_tx = None;//停止buff处理
         if let Some(mut tx) = self.buffer_manager_reset_tx.take() {
             let (ack_tx, ack_rx) = oneshot::channel();
             tx.send(ResetRequest {
@@ -388,7 +392,7 @@ impl EpochManager {
             root_block = recovery_data.root_block(),
             "Starting new epoch",
         );
-        let last_vote = recovery_data.last_vote();
+        let last_vote = recovery_data.last_vote();//上次的投票数据
 
         info!(epoch = epoch, "Update SafetyRules");
 
@@ -404,10 +408,10 @@ impl EpochManager {
 
         info!(epoch = epoch, "Create RoundState");
         let round_state =
-            self.create_round_state(self.time_service.clone(), self.timeout_sender.clone());
+            self.create_round_state(self.time_service.clone(), self.timeout_sender.clone());//轮数状态管理
 
         info!(epoch = epoch, "Create ProposerElection");
-        let proposer_election = self.create_proposer_election(&epoch_state, &onchain_config);
+        let proposer_election = self.create_proposer_election(&epoch_state, &onchain_config);//创建区块提议选举
         let network_sender = NetworkSender::new(
             self.author,
             self.network_sender.clone(),
@@ -417,7 +421,7 @@ impl EpochManager {
 
         let safety_rules_container = Arc::new(Mutex::new(safety_rules));
 
-        let state_computer = if onchain_config.decoupled_execution() {
+        let state_computer = if onchain_config.decoupled_execution() {//如果共识和执行分离
             Arc::new(self.spawn_decoupled_execution(
                 safety_rules_container.clone(),
                 epoch_state.verifier.clone(),
@@ -439,7 +443,8 @@ impl EpochManager {
         info!(epoch = epoch, "Create ProposalGenerator");
         // txn manager is required both by proposal generator (to pull the proposers)
         // and by event processor (to update their status).
-        let proposal_generator = ProposalGenerator::new(
+        // 提案生成器（拉取提案者）和事件处理器（更新其状态）都需要 txn 管理器。
+        let proposal_generator = ProposalGenerator::new(//区块生成服务
             self.author,
             block_store.clone(),
             self.txn_manager.clone(),
@@ -447,7 +452,7 @@ impl EpochManager {
             self.config.max_block_size,
         );
 
-        let mut round_manager = RoundManager::new(
+        let mut round_manager = RoundManager::new(//轮次管理
             epoch_state,
             block_store,
             round_state,
@@ -467,18 +472,18 @@ impl EpochManager {
             Some(&counters::ROUND_MANAGER_CHANNEL_MSGS),
         );
         self.round_manager_tx = Some(round_manager_tx);
-        tokio::spawn(round_manager.start(round_manager_rx));
+        tokio::spawn(round_manager.start(round_manager_rx));//启动
     }
 
     async fn start_new_epoch(&mut self, payload: OnChainConfigPayload) {
         let validator_set: ValidatorSet = payload
             .get()
             .expect("failed to get ValidatorSet from payload");
-        let epoch_state = EpochState {
+        let epoch_state = EpochState {//开始新的epoch状态
             epoch: payload.epoch(),
             verifier: (&validator_set).into(),
         };
-        self.shutdown_current_processor().await;
+        self.shutdown_current_processor().await;//停止当前的进程
 
         let onchain_config: OnChainConsensusConfig = payload.get().unwrap_or_default();
         self.epoch_state = Some(epoch_state.clone());
@@ -487,7 +492,7 @@ impl EpochManager {
             .storage
             .start()
             .expect_recovery_data("Consensusdb is corrupted, need to do a backup and restore");
-        self.start_round_manager(initial_data, epoch_state, onchain_config)
+        self.start_round_manager(initial_data, epoch_state, onchain_config)//启动轮次管理器
             .await;
     }
 
@@ -638,7 +643,7 @@ impl EpochManager {
         mut network_receivers: NetworkReceivers,
     ) {
         // initial start of the processor
-        self.await_reconfig_notification().await;
+        self.await_reconfig_notification().await;//初始化进程
         loop {
             tokio::select! {
                 Some((peer, msg)) = network_receivers.consensus_messages.next() => {

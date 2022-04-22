@@ -353,6 +353,7 @@ impl<TMessage: Message> NetworkSender<TMessage> {
 
 /// A simplified version of `NetworkSender` that doesn't use `ProtocolId` in the input
 /// It was already being implemented for every application, but is now standardized
+/// `NetworkSender` 的简化版本，在输入中不使用 `ProtocolId` 它已经为每个应用程序实现，但现在已标准化
 #[async_trait]
 pub trait ApplicationNetworkSender<TMessage: Send>: Clone {
     fn send_to(&self, _recipient: PeerId, _message: TMessage) -> Result<(), NetworkError> {

@@ -135,6 +135,9 @@ pub mod round_manager_fuzzing;
 /// etc.). It is exposing the async processing functions for each event type.
 /// The caller is responsible for running the event loops and driving the execution via some
 /// executors.
+/// 共识 SMR 以基于事件的方式工作：
+/// RoundManager 负责处理各个事件（例如，process_new_round、process_proposal、process_vote 等）。
+/// 它公开了每种事件类型的异步处理功能。调用者负责运行事件循环并通过一些执行器驱动执行。
 pub struct RoundManager {
     epoch_state: EpochState,
     block_store: Arc<BlockStore>,
@@ -163,6 +166,7 @@ impl RoundManager {
     ) -> Self {
         // when decoupled execution is false,
         // the counter is still static.
+        // 当解耦执行为假时，计数器仍然是静态的。
         counters::OP_COUNTERS
             .gauge("sync_only")
             .set(sync_only as i64);
@@ -210,6 +214,9 @@ impl RoundManager {
     /// that all honest replicas can vote for.  While this method should only be invoked at most
     /// once per round, we ensure that only at most one proposal can get generated per round to
     /// avoid accidental equivocation of proposals.
+    /// 该事件由上一轮的新仲裁证书或上一轮的超时证书触发。
+    /// 无论哪种情况，如果这个副本是本轮的新提议者，它就准备好提议并保证它可以创建一个所有诚实副本都可以投票的提议。
+    /// 虽然此方法每轮最多只能调用一次，但我们确保每轮最多只能生成一个提案，以避免提案的意外模棱两可。
     ///
     /// Replica:
     ///
@@ -267,10 +274,10 @@ impl RoundManager {
         let proposal = self
             .proposal_generator
             .generate_proposal(new_round_event.round, callback)
-            .await?;
-        let signature = self.safety_rules.lock().sign_proposal(&proposal)?;
+            .await?;//生成块数据
+        let signature = self.safety_rules.lock().sign_proposal(&proposal)?;//签名区块数据
         let signed_proposal =
-            Block::new_proposal_from_block_data_and_signature(proposal, signature);
+            Block::new_proposal_from_block_data_and_signature(proposal, signature);//生成已签名的块
         observe_block(signed_proposal.timestamp_usecs(), BlockStage::SIGNED);
         debug!(self.new_log(LogEvent::Propose), "{}", signed_proposal);
         Ok(ProposalMsg::new(
@@ -282,6 +289,9 @@ impl RoundManager {
     /// Process the proposal message:
     /// 1. ensure after processing sync info, we're at the same round as the proposal
     /// 2. execute and decide whether to vode for the proposal
+    /// 处理提案消息：
+    /// 1. 确保处理完同步信息后，我们与提案处于同一轮
+    /// 2. 执行并决定是否为提案投票
     pub async fn process_proposal_msg(&mut self, proposal_msg: ProposalMsg) -> anyhow::Result<()> {
         fail_point!("consensus::process_proposal_msg", |_| {
             Err(anyhow::anyhow!("Injected error in process_proposal_msg"))
@@ -313,6 +323,7 @@ impl RoundManager {
 
     /// Sync to the sync info sending from peer if it has newer certificates, if we have newer certificates
     /// and help_remote is set, send it back the local sync info.
+    /// 如果它有较新的证书，则同步到从对等方发送的同步信息，如果我们有较新的证书并且设置了 help_remote，则将其发回本地同步信息。
     async fn sync_up(
         &mut self,
         sync_info: &SyncInfo,
@@ -320,7 +331,7 @@ impl RoundManager {
         help_remote: bool,
     ) -> anyhow::Result<()> {
         let local_sync_info = self.block_store.sync_info();
-        if help_remote && local_sync_info.has_newer_certificates(sync_info) {
+        if help_remote && local_sync_info.has_newer_certificates(sync_info) {//本地的qc比远程的高，同时设置了标志位，那我们把我们新的数据传过去
             counters::SYNC_INFO_MSGS_SENT_COUNT.inc();
             debug!(
                 self.new_log(LogEvent::HelpPeerSync).remote_peer(author),
@@ -330,7 +341,7 @@ impl RoundManager {
                 .send_sync_info(local_sync_info.clone(), author)
                 .await;
         }
-        if sync_info.has_newer_certificates(&local_sync_info) {
+        if sync_info.has_newer_certificates(&local_sync_info) {//远程更新
             debug!(
                 self.new_log(LogEvent::SyncToPeer).remote_peer(author),
                 "Local state {} is stale than remote state {}", local_sync_info, sync_info
@@ -338,7 +349,7 @@ impl RoundManager {
             // Some information in SyncInfo is ahead of what we have locally.
             // First verify the SyncInfo (didn't verify it in the yet).
             sync_info
-                .verify(&self.epoch_state().verifier)
+                .verify(&self.epoch_state().verifier)//验证
                 .map_err(|e| {
                     error!(
                         SecurityEvent::InvalidSyncInfoMsg,
@@ -366,6 +377,10 @@ impl RoundManager {
     /// Returns Ok(false) if the message is stale.
     /// Returns Error in case sync mgr failed to bring the missing dependencies.
     /// We'll try to help the remote if the SyncInfo lags behind and the flag is set.
+    /// 该函数确保它确保 message_round 等于我们在本地拥有的，
+    /// 从给定同步信息的 QC 和 LedgerInfo 中带来缺失的依赖关系，并在成功时使用证书更新 round_state。
+    /// 如果同步成功并且回合匹配，则返回 Ok(true)，以便我们可以进一步处理。如果消息陈旧，则返回 Ok(false)。
+    /// 如果同步管理器未能带来缺少的依赖项，则返回错误。如果 SyncInfo 滞后并且设置了标志，我们将尝试帮助remote。
     pub async fn ensure_round_and_sync_up(
         &mut self,
         message_round: Round,
@@ -387,6 +402,7 @@ impl RoundManager {
     }
 
     /// Process the SyncInfo sent by peers to catch up to latest state.
+    /// 处理对等方发送的 SyncInfo 以赶上最新状态。
     pub async fn process_sync_info_msg(
         &mut self,
         sync_info: SyncInfo,
@@ -440,6 +456,11 @@ impl RoundManager {
     /// 2) Otherwise vote for a NIL block and sign a timeout.
     /// Note this function returns Err even if messages are broadcasted successfully because timeout
     /// is considered as error. It only returns Ok(()) when the timeout is stale.
+    /// 副本广播“超时投票消息”，其中包括轮签名，可以聚合到 TimeoutCertificate。
+    /// 超时投票消息可以是以下三个选项之一：
+    /// 1）如果验证者之前在本轮投票中，它重复相同的投票并签署超时。
+    /// 2) 否则投票给 NIL 块并签署超时。
+    /// 请注意，即使消息广播成功，此函数也会返回 Err，因为超时被视为错误。它仅在超时过期时返回 Ok(())。
     pub async fn process_local_timeout(&mut self, round: Round) -> anyhow::Result<()> {
         if !self.round_state.process_local_timeout(round) {
             return Ok(());
@@ -510,6 +531,7 @@ impl RoundManager {
     }
 
     /// This function is called only after all the dependencies of the given QC have been retrieved.
+    /// 仅在检索到给定 QC 的所有依赖项后才调用此函数。
     async fn process_certificates(&mut self) -> anyhow::Result<()> {
         let sync_info = self.block_store.sync_info();
         if let Some(new_round_event) = self.round_state.process_certificates(sync_info) {
@@ -524,8 +546,13 @@ impl RoundManager {
     /// 3. Try to vote for it following the safety rules.
     /// 4. In case a validator chooses to vote, send the vote to the representatives at the next
     /// round.
+    /// 此函数处理当前轮次的提案：
+    /// 1. 过滤是否由有效的提案人提出。
+    /// 2. 执行并将其添加到块存储中。
+    /// 3. 尝试按照安全规则投票。
+    /// 4. 如果验证人选择投票，则将投票发送给下一轮的代表。
     async fn process_proposal(&mut self, proposal: Block) -> Result<()> {
-        let author = proposal
+        let author = proposal//获取区块作者
             .author()
             .expect("Proposal should be verified having an author");
 
@@ -536,7 +563,7 @@ impl RoundManager {
         );
 
         ensure!(
-            self.proposer_election.is_valid_proposal(&proposal),
+            self.proposer_election.is_valid_proposal(&proposal),//是个有效块
             "[RoundManager] Proposer {} for block {} is not a valid proposer for this round",
             author,
             proposal,
@@ -545,7 +572,7 @@ impl RoundManager {
         let block_time_since_epoch = Duration::from_micros(proposal.timestamp_usecs());
 
         ensure!(
-            block_time_since_epoch < self.round_state.current_round_deadline(),
+            block_time_since_epoch < self.round_state.current_round_deadline(),//区块时间在这个轮次的时间范围内
             "[RoundManager] Waiting until proposal block timestamp usecs {:?} \
             would exceed the round duration {:?}, hence will not vote for this round",
             block_time_since_epoch,
@@ -562,12 +589,12 @@ impl RoundManager {
 
         let recipients = self
             .proposer_election
-            .get_valid_proposer(proposal_round + 1);
+            .get_valid_proposer(proposal_round + 1);//获取新一轮的打包者
         debug!(self.new_log(LogEvent::Vote).remote_peer(author), "{}", vote);
 
         self.round_state.record_vote(vote.clone());
         let vote_msg = VoteMsg::new(vote, self.block_store.sync_info());
-        self.network.send_vote(vote_msg, vec![recipients]).await;
+        self.network.send_vote(vote_msg, vec![recipients]).await;//发送投票给下一轮区块提议者
         Ok(())
     }
 
@@ -576,6 +603,11 @@ impl RoundManager {
     /// * then verify the voting rules
     /// * save the updated state to consensus DB
     /// * return a VoteMsg with the LedgerInfo to be committed in case the vote gathers QC.
+    /// 该函数为给定的proposed_block生成一个VoteMsg：
+    /// 首先执行该块并将其添加到块存储中，
+    /// 然后验证投票规则
+    /// 将更新的状态保存到共识数据库
+    /// 返回一个VoteMsg，其中包含要提交的LedgerInfo，以防投票收集到QC。
     async fn execute_and_vote(&mut self, proposed_block: Block) -> anyhow::Result<Vote> {
         let executed_block = self
             .block_store
@@ -598,14 +630,14 @@ impl RoundManager {
         let maybe_signed_vote_proposal =
             executed_block.maybe_signed_vote_proposal(self.decoupled_execution());
         let vote_result = if self.two_chain() {
-            self.safety_rules.lock().construct_and_sign_vote_two_chain(
+            self.safety_rules.lock().construct_and_sign_vote_two_chain(//为2chain生成投票
                 &maybe_signed_vote_proposal,
                 self.block_store.highest_2chain_timeout_cert().as_deref(),
             )
         } else {
             self.safety_rules
                 .lock()
-                .construct_and_sign_vote(&maybe_signed_vote_proposal)
+                .construct_and_sign_vote(&maybe_signed_vote_proposal)//为上一轮投票
         };
         let vote = vote_result.context(format!(
             "[RoundManager] SafetyRules {}Rejected{} {}",
@@ -628,11 +660,17 @@ impl RoundManager {
     /// potential attacks).
     /// 2. Add the vote to the pending votes and check whether it finishes a QC.
     /// 3. Once the QC/TC successfully formed, notify the RoundState.
+    /// 新投票时：
+    /// 1. 确保我们正在处理与本地轮次相同的轮次的投票
+    /// 2. 过滤掉不应由该验证器处理的轮次的投票（以避免潜在的攻击）。
+    /// 2. 将投票添加到待处理的投票中，并检查它是否完成了 QC。
+    /// 3. QCTC 成功组建后，通知 RoundState。
     pub async fn process_vote_msg(&mut self, vote_msg: VoteMsg) -> anyhow::Result<()> {
         fail_point!("consensus::process_vote_msg", |_| {
             Err(anyhow::anyhow!("Injected error in process_vote_msg"))
         });
         // Check whether this validator is a valid recipient of the vote.
+        // 检查此验证器是否是投票的有效接收者.
         if self
             .ensure_round_and_sync_up(
                 vote_msg.vote().vote_data().proposed().round(),
@@ -654,8 +692,11 @@ impl RoundManager {
     /// If a new QC / TC is formed then
     /// 1) fetch missing dependencies if required, and then
     /// 2) call process_certificates(), which will start a new round in return.
+    /// 为待决投票添加投票。如果形成了新的 QC TC，则
+    /// 1) 如果需要，获取缺失的依赖项，然后
+    /// 2) 调用 process_certificates()，这将开始新一轮作为回报。
     async fn process_vote(&mut self, vote: &Vote) -> anyhow::Result<()> {
-        let round = vote.vote_data().proposed().round();
+        let round = vote.vote_data().proposed().round();//获取投票的轮数
 
         info!(
             self.new_log(LogEvent::ReceiveVote)
@@ -669,6 +710,7 @@ impl RoundManager {
 
         if !vote.is_timeout() {
             // Unlike timeout votes regular votes are sent to the leaders of the next round only.
+            // 与超时投票不同，常规投票仅发送给下一轮的领导者。
             let next_round = round + 1;
             ensure!(
                 self.proposer_election
@@ -680,6 +722,7 @@ impl RoundManager {
         }
         let block_id = vote.vote_data().proposed().id();
         // Check if the block already had a QC
+        // 检查区块是否已经有了qc，有的话直接返回
         if self
             .block_store
             .get_quorum_cert_for_block(block_id)
@@ -688,6 +731,7 @@ impl RoundManager {
             return Ok(());
         }
         // Add the vote and check whether it completes a new QC or a TC
+        // 添加投票并检查它是否完成了新的 QC 或 TC
         match self
             .round_state
             .insert_vote(vote, &self.epoch_state.verifier)
@@ -748,6 +792,9 @@ impl RoundManager {
     ///
     /// The current version of the function is not really async, but keeping it this way for
     /// future possible changes.
+    /// 从初始父 id 开始从块存储中检索 n 个链式块，如果找不到 id 或其祖先，则返回 <n（尽可能多）。
+    ///
+    /// 该函数的当前版本并不是真正的异步，而是保持这种方式以备将来可能的更改。
     pub async fn process_block_retrieval(
         &self,
         request: IncomingBlockRetrievalRequest,
@@ -788,6 +835,7 @@ impl RoundManager {
     }
 
     /// To jump start new round with the current certificates we have.
+    /// 使用我们拥有的当前证书开始新一轮。
     pub async fn init(&mut self, last_vote_sent: Option<Vote>) {
         let new_round_event = self
             .round_state
@@ -827,6 +875,7 @@ impl RoundManager {
     }
 
     /// Mainloop of processing messages.
+    /// 处理消息的主循环。
     pub async fn start(
         mut self,
         mut event_rx: aptos_channel::Receiver<

@@ -20,6 +20,9 @@ use safety_rules::Error;
 /// SigningPhase is a singleton that receives executed blocks from
 /// the buffer manager and sign them. After getting the signature from
 /// the safety rule, SigningPhase sends the signature and error (if any) back.
+/// [ 当consensus.decoupled = true 时使用这个类]
+/// SigningPhase 是一个单例，它从缓冲区管理器接收执行的块并对其进行签名。
+/// 从安全规则中获取签名后，SigningPhase 将签名和错误（如果有）发回。
 
 pub struct SigningRequest {
     pub ordered_ledger_info: LedgerInfoWithSignatures,

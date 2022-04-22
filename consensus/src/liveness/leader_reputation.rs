@@ -98,6 +98,7 @@ pub trait ReputationHeuristic: Send + Sync {
 }
 
 /// If candidate appear in the history, it's assigned active_weight otherwise inactive weight.
+/// 如果候选人出现在历史记录中，则为其分配 active_weight 否则为非活动权重。
 pub struct ActiveInactiveHeuristic {
     author: Author,
     active_weight: u64,
@@ -155,6 +156,7 @@ impl ReputationHeuristic for ActiveInactiveHeuristic {
 
 /// Committed history based proposer election implementation that could help bias towards
 /// successful leaders to help improve performance.
+/// 承诺基于历史的提议者选举实施，可以帮助偏向成功的领导者，以帮助提高绩效。
 pub struct LeaderReputation {
     proposers: Vec<Author>,
     backend: Box<dyn MetadataBackend>,

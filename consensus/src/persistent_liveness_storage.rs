@@ -26,6 +26,8 @@ use storage_interface::DbReader;
 /// guaranteed.
 /// Blocks persisted are proposed but not yet committed.  The committed state is persisted
 /// via StateComputer.
+/// PersistentLivenessStorage 对于在节点崩溃时保持活跃度至关重要。具体来说，在重新启动时，正确的节点将恢复。
+/// 即使所有节点都崩溃了，也保证了活跃性。已提议但尚未提交的持久块。提交状态通过 StateComputer 持久化
 pub trait PersistentLivenessStorage: Send + Sync {
     /// Persist the blocks and quorum certs into storage atomically.
     fn save_tree(&self, blocks: Vec<Block>, quorum_certs: Vec<QuorumCert>) -> Result<()>;
@@ -70,6 +72,7 @@ pub struct RootInfo(
 );
 
 /// LedgerRecoveryData is a subset of RecoveryData that we can get solely from ledger info.
+/// LedgerRecoveryData 是 RecoveryData 的一个子集，我们只能从分类帐信息中获取。
 #[derive(Clone)]
 pub struct LedgerRecoveryData {
     storage_ledger: LedgerInfoWithSignatures,
@@ -172,6 +175,7 @@ impl RootMetadata {
 
 /// The recovery data constructed from raw consensusdb data, it'll find the root value and
 /// blocks that need cleanup or return error if the input data is inconsistent.
+/// 从原始的consensusdb数据构建的恢复数据，如果输入数据不一致，它将找到需要清理或返回错误的根值和块
 pub struct RecoveryData {
     // The last vote message sent by this validator.
     last_vote: Option<Vote>,
@@ -305,6 +309,7 @@ impl RecoveryData {
 }
 
 /// The proxy we use to persist data in db storage service via grpc.
+/// 我们用来通过 grpc 将数据持久化到 db 存储服务中的代理。
 pub struct StorageWriteProxy {
     db: Arc<ConsensusDB>,
     aptos_db: Arc<dyn DbReader>,

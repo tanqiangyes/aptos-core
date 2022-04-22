@@ -23,6 +23,7 @@ impl OnChainConsensusConfig {
     }
 
     /// The number of recent rounds that don't count into reputations.
+    /// 不计入声誉的最近回合数
     pub fn leader_reputation_exclude_round(&self) -> u64 {
         match &self {
             OnChainConsensusConfig::V2(config) => config.exclude_round,
@@ -32,6 +33,7 @@ impl OnChainConsensusConfig {
     }
 
     /// Decouple execution from consensus or not.
+    /// 是否将执行与共识分离
     pub fn decoupled_execution(&self) -> bool {
         match &self {
             OnChainConsensusConfig::V2(config) => config.decoupled_execution,

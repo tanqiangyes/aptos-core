@@ -11,4 +11,5 @@ pub type Round = u64;
 pub type Author = AccountAddress;
 
 /// The payload in block.
+/// 区块中的交易
 pub type Payload = Vec<SignedTransaction>;

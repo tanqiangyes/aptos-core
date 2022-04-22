@@ -46,6 +46,7 @@ fn aggregate_ledger_info(
 
 // we differentiate buffer items at different stages
 // for better code readability
+// 我们区分不同阶段的缓冲区项目以提高代码可读性
 pub struct OrderedItem {
     pub unverified_signatures: BTreeMap<AccountAddress, Ed25519Signature>,
     pub callback: StateComputerCommitCallBackType,
@@ -207,6 +208,7 @@ impl BufferItem {
 
     /// this function assumes block id matches and the validity of ledger_info and that it has the voting power
     /// it returns an updated item
+    /// 此函数假定块 id 匹配和 ledger_info 的有效性，并且它具有投票权。它返回一个更新的项目
     pub fn try_advance_to_aggregated_with_ledger_info(
         self,
         commit_proof: LedgerInfoWithSignatures,

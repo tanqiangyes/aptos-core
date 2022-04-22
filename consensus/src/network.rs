@@ -37,6 +37,7 @@ use std::{
 
 /// The block retrieval request is used internally for implementing RPC: the callback is executed
 /// for carrying the response
+/// 块检索请求在内部用于实现 RPC：执行回调以携带响应
 #[derive(Debug)]
 pub struct IncomingBlockRetrievalRequest {
     pub req: BlockRetrievalRequest,
@@ -46,8 +47,10 @@ pub struct IncomingBlockRetrievalRequest {
 
 /// Just a convenience struct to keep all the network proxy receiving queues in one place.
 /// Will be returned by the NetworkTask upon startup.
+/// 只是一个方便的结构，可以将所有网络代理接收队列保存在一个地方。将在启动时由 NetworkTask 返回。
 pub struct NetworkReceivers {
     /// Provide a LIFO buffer for each (Author, MessageType) key
+    /// 为每个 (Author, MessageType) 键提供一个 LIFO 缓冲区
     pub consensus_messages: aptos_channel::Receiver<
         (AccountAddress, Discriminant<ConsensusMsg>),
         (AccountAddress, ConsensusMsg),
@@ -56,6 +59,7 @@ pub struct NetworkReceivers {
 }
 
 /// Implements the actual networking support for all consensus messaging.
+/// 为所有共识消息实现实际的网络支持。
 #[derive(Clone)]
 pub struct NetworkSender {
     author: Author,
@@ -84,6 +88,7 @@ impl NetworkSender {
 
     /// Tries to retrieve num of blocks backwards starting from id from the given peer: the function
     /// returns a future that is fulfilled with BlockRetrievalResponse.
+    /// 尝试从给定对等方的 id 开始向后检索块数：该函数返回一个由 BlockRetrievalResponse 实现的未来。
     pub async fn request_block(
         &mut self,
         retrieval_request: BlockRetrievalRequest,
@@ -120,6 +125,7 @@ impl NetworkSender {
     /// internal(to provide back pressure), it does not indicate the message is delivered or sent
     /// out. It does not give indication about when the message is delivered to the recipients,
     /// as well as there is no indication about the network failures.
+    /// 尝试将给定的消息发送给所有参与者。
     pub async fn broadcast(&mut self, msg: ConsensusMsg) {
         // Directly send the message to ourself without going through network.
         let self_msg = Event::Message(self.author, msg.clone());
@@ -170,6 +176,10 @@ impl NetworkSender {
     /// internal(to provide back pressure), it does not indicate the message is delivered or sent
     /// out. It does not give indication about when the message is delivered to the recipients,
     /// as well as there is no indication about the network failures.
+    /// 将投票发送给选定的收件人（通常是我们认为可以在下一轮中担任提议者的收件人）。
+    /// 接收端的收件人将收到有关投票队列中的新投票的通知。
+    /// 消息一旦放入 mpsc 通道到网络内部（提供背压）就实现了未来，它并不表示消息已传递或发送出去。
+    /// 它没有指示消息何时传递给收件人，也没有指示网络故障。
     pub async fn send_vote(&self, vote_msg: VoteMsg, recipients: Vec<Author>) {
         let msg = ConsensusMsg::VoteMsg(Box::new(vote_msg));
         self.send(msg, recipients).await
@@ -178,6 +188,7 @@ impl NetworkSender {
     /// Sends the given sync info to the given author.
     /// The future is fulfilled as soon as the message is added to the internal network channel
     /// (does not indicate whether the message is delivered or sent out).
+    /// 发送给定的同步信息到指定的接收者。
     pub async fn send_sync_info(&self, sync_info: SyncInfo, recipient: Author) {
         let msg = ConsensusMsg::SyncInfo(Box::new(sync_info));
         self.send(msg, vec![recipient]).await
@@ -211,6 +222,7 @@ impl NetworkTask {
         network_events: ConsensusNetworkEvents,
         self_receiver: channel::Receiver<Event<ConsensusMsg>>,
     ) -> (NetworkTask, NetworkReceivers) {
+        //无论是共识信息，还是区块检索消息，都只允许一个节点同时间有一个请求；而且是先进后出
         let (consensus_messages_tx, consensus_messages) =
             aptos_channel::new(QueueStyle::LIFO, 1, Some(&counters::CONSENSUS_CHANNEL_MSGS));
         let (block_retrieval_tx, block_retrieval) = aptos_channel::new(

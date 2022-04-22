@@ -36,31 +36,42 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 /// Network type for consensus
+/// 共识网络类型
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum ConsensusMsg {
     /// RPC to get a chain of block of the given length starting from the given block id.
+    /// RPC 从给定的块 id 获取给定长度的块链。
     BlockRetrievalRequest(Box<BlockRetrievalRequest>),
     /// Carries the returned blocks and the retrieval status.
+    /// 携带返回的块和检索状态
     BlockRetrievalResponse(Box<BlockRetrievalResponse>),
     /// Request to get a EpochChangeProof from current_epoch to target_epoch
+    /// 请求从 current_epoch 到 target_epoch 获取 EpochChangeProof
     EpochRetrievalRequest(Box<EpochRetrievalRequest>),
     /// ProposalMsg contains the required information for the proposer election protocol to make
     /// its choice (typically depends on round and proposer info).
+    /// ProposalMsg 包含提议者选举协议做出选择所需的信息（通常取决于轮次和提议者信息）。
     ProposalMsg(Box<ProposalMsg>),
     /// This struct describes basic synchronization metadata.
+    /// 这个结构描述了基本的同步元数据
     SyncInfo(Box<SyncInfo>),
     /// A vector of LedgerInfo with contiguous increasing epoch numbers to prove a sequence of
     /// epoch changes from the first LedgerInfo's epoch.
+    /// LedgerInfo 的向量具有连续增加的纪元数，以证明从第一个 LedgerInfo 纪元开始的纪元序列变化。
     EpochChangeProof(Box<EpochChangeProof>),
     /// VoteMsg is the struct that is ultimately sent by the voter in response for receiving a
     /// proposal.
+    /// VoteMsg 是最终由选民发送的结构，以响应接收提案。
     VoteMsg(Box<VoteMsg>),
     /// CommitProposal is the struct that is sent by the validator after execution to propose
     /// on the committed state hash root.
+    /// CommitProposal 是验证器在执行后发送的结构体，用于在已提交状态哈希根上提出建议。
     CommitVoteMsg(Box<CommitVote>),
     /// CommitDecision is the struct that is sent by the validator after collecting no fewer
     /// than 2f + 1 signatures on the commit proposal. This part is not on the critical path, but
     /// it can save slow machines to quickly confirm the execution result.
+    /// CommitDecision 是验证者在对提交提案收集不少于 2f + 1 个签名后发送的结构。
+    /// 这部分不在关键路径上，但可以省去慢机器快速确认执行结果。
     CommitDecisionMsg(Box<CommitDecision>),
 }
 
@@ -70,6 +81,10 @@ pub enum ConsensusMsg {
 /// raw `Bytes` direct-send and rpc messages are deserialized into
 /// `ConsensusMessage` types. `ConsensusNetworkEvents` is a thin wrapper around
 /// an `channel::Receiver<PeerManagerNotification>`.
+/// 从网络到共识层的接口。
+/// `ConsensusNetworkEvents` 是 `PeerManagerNotification` 的 `Stream`，
+/// 其中原始的 `Bytes` 直接发送和 rpc 消息被反序列化为 `ConsensusMessage` 类型。
+/// `ConsensusNetworkEvents` 是 `channel::Receiver<PeerManagerNotification>` 的薄包装。
 pub type ConsensusNetworkEvents = NetworkEvents<ConsensusMsg>;
 
 /// The interface from Consensus to Networking layer.
@@ -80,6 +95,10 @@ pub type ConsensusNetworkEvents = NetworkEvents<ConsensusMsg>;
 /// remote, to finally receiving the response and deserializing. It therefore
 /// makes the most sense to make the rpc call on a separate async task, which
 /// requires the `ConsensusNetworkSender` to be `Clone` and `Send`.
+/// .从共识层到网络层的接口。
+/// 这是一个围绕 `NetworkSender<ConsensusMsg>` 的薄包装，因此很容易克隆并发送到单独的任务。
+/// 例如，rpc 请求返回的 Futures 封装了整个流程，从发送请求到远程，到最终接收响应和反序列化。
+/// 因此，在单独的异步任务上进行 rpc 调用是最有意义的，这需要 `ConsensusNetworkSender` 为 `Clone` 和 `Send`。
 #[derive(Clone)]
 pub struct ConsensusNetworkSender {
     network_sender: NetworkSender<ConsensusMsg>,
@@ -87,8 +106,10 @@ pub struct ConsensusNetworkSender {
 }
 
 /// Supported protocols in preferred order (from highest priority to lowest).
+/// 按优先顺序（从最高优先级到最低优先级）支持的协议。优先json
 pub const RPC: &[ProtocolId] = &[ProtocolId::ConsensusRpcJson, ProtocolId::ConsensusRpcBcs];
 /// Supported protocols in preferred order (from highest priority to lowest).
+/// 按优先顺序（从最高优先级到最低优先级）支持的协议。
 pub const DIRECT_SEND: &[ProtocolId] = &[
     ProtocolId::ConsensusDirectSendJson,
     ProtocolId::ConsensusDirectSendBcs,
@@ -122,11 +143,13 @@ impl NewNetworkSender for ConsensusNetworkSender {
 
 impl ConsensusNetworkSender {
     /// Initialize a shared hashmap about connections metadata that is updated by the receiver.
+    /// 初始化一个由接收者更新的关于连接元数据的共享哈希图。
     pub fn initialize(&mut self, peer_metadata_storage: Arc<PeerMetadataStorage>) {
         self.peer_metadata_storage = Some(peer_metadata_storage);
     }
 
     /// Query the supported protocols from this peer's connection.
+    /// 从这个对等点的连接中查询支持的协议
     fn supported_protocols(&self, peer: PeerId) -> anyhow::Result<ProtocolIdSet> {
         if let Some(peer_metadata_storage) = &self.peer_metadata_storage {
             let peer_network_id = PeerNetworkId::new(NetworkId::Validator, peer);
@@ -140,6 +163,7 @@ impl ConsensusNetworkSender {
     }
 
     /// Choose the overlapping protocol for peer. The local protocols are sorted from most to least preferred.
+    /// 为对等选择重叠协议。本地协议按优先级从高到低排序。
     fn preferred_protocol_for_peer(
         &self,
         peer: PeerId,
@@ -158,12 +182,14 @@ impl ConsensusNetworkSender {
 #[async_trait]
 impl ApplicationNetworkSender<ConsensusMsg> for ConsensusNetworkSender {
     /// Send a single message to the destination peer using available ProtocolId.
+    /// 使用可用的 ProtocolId 向目标对等方发送一条消息。
     fn send_to(&self, recipient: PeerId, message: ConsensusMsg) -> Result<(), NetworkError> {
         let protocol = self.preferred_protocol_for_peer(recipient, DIRECT_SEND)?;
         self.network_sender.send_to(recipient, protocol, message)
     }
 
     /// Send a single message to the destination peers using available ProtocolId.
+    /// 使用可用的 ProtocolId 向目标对等方发送一条消息。
     fn send_to_many(
         &self,
         recipients: impl Iterator<Item = PeerId>,

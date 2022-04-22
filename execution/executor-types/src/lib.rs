@@ -108,6 +108,11 @@ pub trait BlockExecutorTrait: Send + Sync {
     /// and only `C` and `E` have signatures, we will send `A`, `B` and `C` in the first batch,
     /// then `D` and `E` later in the another batch.
     /// Commits a block and all its ancestors in a batch manner.
+    /// 将符合条件的块保存到持久存储。如果我们有多个区块并且并非所有区块都有签名，我们可能会分几批将它们发送到存储中。例如，如果我们有
+    /// ```text
+    ///  A <- B <- C <- D <- E
+    ///  ```
+    /// 只有`C`和`E`有签名，我们将在第一批发送`A`、`B`和`C`，然后在另一批发送`D`和`E`。以批处理方式提交一个块及其所有祖先。
     fn commit_blocks(
         &self,
         block_ids: Vec<HashValue>,

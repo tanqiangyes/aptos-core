@@ -17,6 +17,7 @@ use std::{
 
 /// Metadata storage for peers across all of networking.  Splits storage of information across
 /// networks to prevent different networks from affecting each other
+/// 跨所有网络的对等点的元数据存储。跨网络拆分信息存储，防止不同网络相互影响
 #[derive(Debug)]
 pub struct PeerMetadataStorage {
     storage: HashMap<NetworkId, LockingHashMap<PeerId, PeerInfo>>,

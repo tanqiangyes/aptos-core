@@ -19,6 +19,8 @@ use executor_types::Error;
 /// PersistingPhase is a singleton that receives aggregated blocks from
 /// the buffer manager and persists them. Upon success, it returns
 /// a response.
+/// [ 当consensus.decoupled = true 时使用此类]
+/// PersistingPhase 是一个单例，它从缓冲区管理器接收聚合块并将它们持久化。成功后，它会返回响应。
 
 pub struct PersistingRequest {
     pub blocks: Vec<Arc<ExecutedBlock>>,
