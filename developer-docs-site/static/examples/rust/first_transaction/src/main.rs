@@ -34,9 +34,9 @@ fn transfer() {
     // Create two accounts, Alice and Bob, and fund Alice but not Bob
 
 
-    let decoded = hex::decode("10E316BF45744B15F9FAF3834A9B8E748C459A3A4554539BBA4A9621AB71BF52").expect("Decoding failed");
+    let decoded = hex::decode("A0A92F4F46342C4143C209EB1D876BA0847210AD4F11CA42B92D667C522A9B6E").expect("Decoding failed");
     let mut alice = Account::new(Some(decoded));
-    let decodedbob = hex::decode("f41548d059970000ac2636554148450f1b7db15516ed07cde4013a56a9d45b12").expect("Decoding failed");
+    let decodedbob = hex::decode("A0A92F4F46342C4143C209EB1D876BA0847210AD4F11CA42B92D667C522A9B6E").expect("Decoding failed");
     let bob = Account::new(Some(decodedbob));
 
     println!("\n=== Addresses ===");

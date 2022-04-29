@@ -45,6 +45,7 @@ type SparseMerkleTree = scratchpad::SparseMerkleTree<StateValue>;
 pub trait ChunkExecutorTrait: Send + Sync {
     /// Verifies the transactions based on the provided proofs and ledger info. If the transactions
     /// are valid, executes them and returns the executed result for commit.
+    /// 根据提供的证明和分类帐信息验证交易。如果事务有效，则执行它们并返回执行结果以进行提交。
     fn execute_chunk(
         &self,
         txn_list_with_proof: TransactionListWithProof,
@@ -55,6 +56,7 @@ pub trait ChunkExecutorTrait: Send + Sync {
 
     /// Similar to `execute_chunk`, but instead of executing transactions, apply the transaction
     /// outputs directly to get the executed result.
+    /// 类似于`execute_chunk`，但不是执行事务，而是直接应用事务输出来获取执行结果。
     fn apply_chunk(
         &self,
         txn_output_list_with_proof: TransactionOutputListWithProof,
@@ -65,6 +67,7 @@ pub trait ChunkExecutorTrait: Send + Sync {
 
     /// Commit a previously executed chunk. Returns a vector of reconfiguration
     /// events in the chunk and the transactions that were committed.
+    /// 提交之前执行的块。返回块中的重新配置事件向量和已提交的事务。
     fn commit_chunk(&self) -> Result<(Vec<ContractEvent>, Vec<Transaction>)>;
 
     fn execute_and_commit_chunk(
@@ -82,6 +85,7 @@ pub trait ChunkExecutorTrait: Send + Sync {
     ) -> Result<(Vec<ContractEvent>, Vec<Transaction>)>;
 
     /// Resets the chunk executor by synchronizing state with storage.
+    /// 通过将状态与存储同步来重置块执行器。
     fn reset(&self) -> Result<()>;
 }
 
@@ -133,40 +137,50 @@ pub trait TransactionReplayer: Send {
 /// A structure that summarizes the result of the execution needed for consensus to agree on.
 /// The execution is responsible for generating the ID of the new state, which is returned in the
 /// result.
-///
+/// 一种结构，总结了达成共识所需的执行结果。执行负责生成新状态的 ID，并在结果中返回。
 /// Not every transaction in the payload succeeds: the returned vector keeps the boolean status
 /// of success / failure of the transactions.
 /// Note that the specific details of compute_status are opaque to StateMachineReplication,
 /// which is going to simply pass the results between StateComputer and TxnManager.
+/// 并非负载中的每个事务都成功：返回的向量保持事务成功失败的布尔状态。
+/// 注意，compute_status 的具体细节对 StateMachineReplication 是不透明的，StateMachineReplication 将简单地在 StateComputer 和 TxnManager 之间传递结果。
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct StateComputeResult {
     /// transaction accumulator root hash is identified as `state_id` in Consensus.
+    /// 交易累加器根哈希在共识中被标识为 `state_id`。
     root_hash: HashValue,
     /// Represents the roots of all the full subtrees from left to right in this accumulator
     /// after the execution. For details, please see [`InMemoryAccumulator`](accumulator::InMemoryAccumulator).
     frozen_subtree_roots: Vec<HashValue>,
 
     /// The frozen subtrees roots of the parent block,
+    /// 父块的冻结子树根，
     parent_frozen_subtree_roots: Vec<HashValue>,
 
     /// The number of leaves of the transaction accumulator after executing a proposed block.
     /// This state must be persisted to ensure that on restart that the version is calculated correctly.
+    /// 执行提议的块后事务累加器的叶子数。必须保持此状态以确保在重新启动时正确计算版本。
     num_leaves: u64,
 
     /// The number of leaves after executing the parent block,
+    /// 执行父块后的叶子数，
     parent_num_leaves: u64,
 
     /// If set, this is the new epoch info that should be changed to if this block is committed.
+    /// 新epoch的信息，如果设置了，则应该在区块commited的时候改变
     epoch_state: Option<EpochState>,
     /// The compute status (success/failure) of the given payload. The specific details are opaque
     /// for StateMachineReplication, which is merely passing it between StateComputer and
     /// TxnManager.
+    /// 给定负载的计算状态（成功失败）。 StateMachineReplication 的具体细节是不透明的，它只是在 StateComputer 和 TxnManager 之间传递它。
     compute_status: Vec<TransactionStatus>,
 
     /// The transaction info hashes of all success txns.
+    /// 所有成功 txns 的交易信息哈希。
     transaction_info_hashes: Vec<HashValue>,
 
     /// The signature of the VoteProposal corresponding to this block.
+    /// 该区块对应的 VoteProposal 的签名。
     signature: Option<Ed25519Signature>,
 
     reconfig_events: Vec<ContractEvent>,
@@ -201,6 +215,7 @@ impl StateComputeResult {
     /// generate a new dummy state compute result with a given root hash.
     /// this function is used in RandomComputeResultStateComputer to assert that the compute
     /// function is really called.
+    /// 使用给定的根哈希生成新的虚拟状态计算结果。此函数在 RandomComputeResultStateComputer 中用于断言计算函数确实被调用。
     pub fn new_dummy_with_root_hash(root_hash: HashValue) -> Self {
         Self {
             root_hash,
@@ -291,16 +306,19 @@ impl StateComputeResult {
 
 /// A wrapper of the in-memory state sparse merkle tree and the transaction accumulator that
 /// represent a specific state collectively. Usually it is a state after executing a block.
+/// 内存中状态稀疏默克尔树和事务累加器的包装器，它们共同表示特定状态。通常是执行块后的状态。
 #[derive(Clone, Debug)]
 pub struct ExecutedTrees {
     /// The in-memory Sparse Merkle Tree representing a specific state after execution. If this
     /// tree is presenting the latest commited state, it will have a single Subtree node (or
     /// Empty node) whose hash equals the root hash of the newest Sparse Merkle Tree in
     /// storage.
+    /// 表示执行后特定状态的内存中稀疏默克尔树。如果这棵树呈现最新的提交状态，它将有一个子树节点（或空节点），其哈希等于存储中最新的稀疏默克尔树的根哈希。
     state_tree: SparseMerkleTree,
 
     /// The in-memory Merkle Accumulator representing a blockchain state consistent with the
     /// `state_tree`.
+    /// 内存中的 Merkle Accumulator 表示与“state_tree”一致的区块链状态。
     transaction_accumulator: Arc<InMemoryAccumulator<TransactionAccumulatorHasher>>,
 }
 
@@ -402,35 +420,45 @@ impl ProofRead<StateValue> for ProofReader {
 
 /// The entire set of data associated with a transaction. In addition to the output generated by VM
 /// which includes the write set and events, this also has the in-memory trees.
+/// 与事务关联的整个数据集。除了由 VM 生成的输出（包括写入集和事件）之外，它还有内存中的树。
 #[derive(Clone, Debug)]
 pub struct TransactionData {
     /// Each entry in this map represents the new value of a store store object touched by this
     /// transaction.
+    /// 此映射中的每个条目都表示此事务涉及的商店商店对象的新值。
     state_updates: HashMap<StateKey, StateValue>,
 
     /// Each entry in this map represents the the hash of a newly generated jellyfish node
     /// and its corresponding nibble path.
+    /// 此映射中的每个条目表示新生成的水母节点的哈希值及其对应的半字节路径。
     jf_node_hashes: HashMap<NibblePath, HashValue>,
 
     /// The writeset generated from this transaction.
+    /// 从此事务生成的写入集。
     write_set: WriteSet,
 
     /// The list of events emitted during this transaction.
+    /// 此事务期间发出的事件列表。
     events: Vec<ContractEvent>,
 
     /// List of reconfiguration events emitted during this transaction.
+    /// 此事务期间发出的重新配置事件列表。
     reconfig_events: Vec<ContractEvent>,
 
     /// The execution status set by the VM.
+    /// VM 设置的执行状态。
     status: TransactionStatus,
 
     /// The in-memory Merkle Accumulator that has all events emitted by this transaction.
+    /// 具有此事务发出的所有事件的内存中 Merkle 累加器。
     event_tree: Arc<InMemoryAccumulator<EventAccumulatorHasher>>,
 
     /// The amount of gas used.
+    /// gas使用量
     gas_used: u64,
 
     /// TransactionInfo
+    /// 交易信息
     txn_info: TransactionInfo,
 
     /// TransactionInfo.hash()

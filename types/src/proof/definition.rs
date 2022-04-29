@@ -42,6 +42,7 @@ pub struct AccumulatorProof<H> {
 /// Because leaves can only take half the space in the tree, any numbering of the tree leaves must
 /// not take the full width of the total space.  Thus, for a 64-bit ordering, our maximumm proof
 /// depth is limited to 63.
+/// 因为树叶只能占据树中一半的空间，所以任何编号的树叶都不能占据总空间的整个宽度。因此，对于 64 位排序，我们的最大证明深度限制为 63。
 pub type LeafCount = u64;
 pub const MAX_ACCUMULATOR_PROOF_DEPTH: usize = 63;
 pub const MAX_ACCUMULATOR_LEAVES: LeafCount = 1 << MAX_ACCUMULATOR_PROOF_DEPTH;

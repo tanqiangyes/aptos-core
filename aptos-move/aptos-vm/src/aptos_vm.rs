@@ -788,6 +788,7 @@ impl AptosVM {
 
     /// Alternate form of 'execute_block' that keeps the vm_status before it goes into the
     /// `TransactionOutput`
+    /// 'execute_block' 的另一种形式，它在进入 `TransactionOutput` 之前保留 vm_status
     pub fn execute_block_and_keep_vm_status(
         transactions: Vec<Transaction>,
         state_view: &impl StateView,
@@ -809,6 +810,9 @@ impl VMExecutor for AptosVM {
     /// have an empty `WriteSet`. Also `state_view` is immutable, and does not have interior
     /// mutability. Writes to be applied to the data view are encoded in the write set part of a
     /// transaction output.
+    /// 执行一个“事务”块。
+    /// 输出向量将具有与输入向量完全相同的长度。丢弃的交易将被标记为 `TransactionStatus::Discard` 并且有一个空的 `WriteSet`。
+    /// `state_view` 也是不可变的，并且不具有内部可变性。应用于数据视图的写入被编码在事务输出的写入集部分。
     fn execute_block(
         transactions: Vec<Transaction>,
         state_view: &impl StateView,

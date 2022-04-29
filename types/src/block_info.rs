@@ -21,22 +21,30 @@ pub const GENESIS_TIMESTAMP_USECS: u64 = 0;
 /// This structure contains all the information needed for tracking a block
 /// without having access to the block or its execution output state. It
 /// assumes that the block is the last block executed within the ledger.
+/// 此结构包含跟踪块所需的所有信息，而无需访问块或其执行输出状态。它假定该块是分类帐中执行的最后一个块。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
 pub struct BlockInfo {
     /// Epoch number corresponds to the set of validators that are active for this block.
+    /// 纪元数对应于该块活跃的验证者集
     epoch: u64,
     /// The consensus protocol is executed in rounds, which monotonically increase per epoch.
+    /// 共识协议分轮执行，每个周期单调递增。
     round: Round,
     /// The identifier (hash) of the block.
+    /// 块的标识符（哈希）。
     id: HashValue,
     /// The accumulator root hash after executing this block.
+    /// 执行此块后的累加器根哈希。
     executed_state_id: HashValue,
     /// The version of the latest transaction after executing this block.
+    /// 执行此区块后最新交易的版本。
     version: Version,
     /// The timestamp this block was proposed by a proposer.
+    /// 该区块的时间戳是由提议者提议的。
     timestamp_usecs: u64,
     /// An optional field containing the next epoch info
+    /// 包含下一个纪元信息的可选字段
     next_epoch_state: Option<EpochState>,
 }
 

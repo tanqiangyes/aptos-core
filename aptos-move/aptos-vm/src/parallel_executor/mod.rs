@@ -69,6 +69,7 @@ impl ParallelAptosVM {
         // Verify the signatures of all the transactions in parallel.
         // This is time consuming so don't wait and do the checking
         // sequentially while executing the transactions.
+        // 并行验证所有交易的签名。这很耗时，因此在执行事务时不要等待并按顺序进行检查。
         let signature_verified_block: Vec<PreprocessedTransaction> = transactions
             .par_iter()
             .map(|txn| preprocess_transaction::<AptosVM>(txn.clone()))

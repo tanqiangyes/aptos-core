@@ -20,12 +20,15 @@ use storage_interface::verified_state_view::{StateCache, VerifiedStateView};
 
 pub struct ChunkOutput {
     /// Input transactions.
+    /// 输入的交易
     pub transactions: Vec<Transaction>,
     /// Raw VM output.
+    /// 执行输出
     pub transaction_outputs: Vec<TransactionOutput>,
     /// Carries the frozen base state view, so all in-mem nodes involved won't drop before the
     /// execution result is processed; as well as al the accounts touched during execution, together
     /// with their proofs.
+    /// 携带冻结的基本状态视图，因此在执行结果处理之前，所有涉及的 in-mem 节点都不会下降；以及执行过程中涉及的所有帐户及其证明。
     pub state_cache: StateCache,
 }
 

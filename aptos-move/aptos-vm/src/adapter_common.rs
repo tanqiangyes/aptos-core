@@ -251,6 +251,8 @@ pub enum PreprocessedTransaction {
 /// is a PreprocessedTransaction, where a user transaction is translated to a
 /// SignatureCheckedTransaction and also categorized into either a UserTransaction
 /// or a WriteSet transaction.
+/// 检查交易的签名（如果有）。如果签名正常，则结果是 PreprocessedTransaction，
+/// 其中用户事务被转换为 SignatureCheckedTransaction 并分类为 UserTransaction 或 WriteSet 事务。
 pub(crate) fn preprocess_transaction<A: VMAdapter>(txn: Transaction) -> PreprocessedTransaction {
     match txn {
         Transaction::BlockMetadata(b) => PreprocessedTransaction::BlockMetadata(b),

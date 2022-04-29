@@ -74,12 +74,12 @@ where
         let parent_view = &parent_output.result_view;
         let parent_accumulator = parent_view.txn_accumulator();
 
-        if let Some(b) = block_vec.pop().expect("Must exist") {
+        if let Some(b) = block_vec.pop().expect("Must exist") {//如果还能获取到，说明这是一个重试操作。
             // this is a retry
             return Ok(b.output.as_state_compute_result(parent_accumulator));
         }
 
-        let output = if parent_block_id != committed_block.id && parent_output.has_reconfiguration()
+        let output = if parent_block_id != committed_block.id && parent_output.has_reconfiguration()//todo：这里的含义没搞懂
         {
             info!(
                 LogSchema::new(LogEntry::BlockExecutor).block_id(block_id),
@@ -92,13 +92,13 @@ where
                 "execute_block"
             );
             let _timer = APTOS_EXECUTOR_EXECUTE_BLOCK_SECONDS.start_timer();
-            let state_view = parent_view.state_view(
+            let state_view = parent_view.state_view(//生成父类视图
                 &committed_block.output.result_view,
                 StateViewId::BlockExecution { block_id },
                 self.db.reader.clone(),
             );
 
-            let chunk_output = {
+            let chunk_output = {//执行交易，生成新的视图
                 let _timer = APTOS_EXECUTOR_VM_EXECUTE_BLOCK_SECONDS.start_timer();
                 fail_point!("executor::vm_execute_block", |_| {
                     Err(Error::from(anyhow::anyhow!(
@@ -109,14 +109,14 @@ where
             };
             chunk_output.trace_log_transaction_status();
 
-            let (output, _, _) = chunk_output.apply_to_ledger(parent_accumulator)?;
+            let (output, _, _) = chunk_output.apply_to_ledger(parent_accumulator)?;//应用执行之后的信息
             output
         };
 
         let block = self
             .block_tree
             .add_block(parent_block_id, block_id, output)?;
-        Ok(block.output.as_state_compute_result(parent_accumulator))
+        Ok(block.output.as_state_compute_result(parent_accumulator))//返回状态计算结果
     }
 
     fn commit_blocks(
@@ -152,7 +152,7 @@ where
             .result_view
             .txn_accumulator()
             .num_leaves();
-        let to_commit = txns_to_commit.len();
+        let to_commit = txns_to_commit.len();//获取之前提交的区块的变化
         let target_version = ledger_info_with_sigs.ledger_info().version();
         if first_version + txns_to_commit.len() as u64 != target_version + 1 {
             return Err(Error::BadNumTxnsToCommit {
