@@ -6,11 +6,7 @@
 //! TODO: Examples
 //!
 
-use crate::{
-    common::{types::NodeOptions, utils::to_common_result},
-    CliResult, Error as CommonError,
-};
-use anyhow::Error;
+use crate::common::types::{CliConfig, CliError, CliTypedResult, ProfileOptions, RestOptions};
 use aptos_rest_client::{types::Resource, Client};
 use aptos_types::account_address::AccountAddress;
 use clap::Parser;
@@ -20,33 +16,41 @@ use clap::Parser;
 #[derive(Debug, Parser)]
 pub struct ListResources {
     #[clap(flatten)]
-    node: NodeOptions,
+    rest_options: RestOptions,
+
+    #[clap(flatten)]
+    profile: ProfileOptions,
 
     /// Address of account you want to list resources for
-    #[clap(long)]
-    account: AccountAddress,
+    #[clap(long, parse(try_from_str=crate::common::types::load_account_arg))]
+    account: Option<AccountAddress>,
 }
 
 impl ListResources {
-    async fn get_resources(self) -> Result<Vec<serde_json::Value>, Error> {
-        let client = Client::new(self.node.url);
+    // TODO: Format this in a reasonable way while providing all information
+    // add options like --tokens --nfts etc
+    pub(crate) async fn execute(self) -> CliTypedResult<Vec<serde_json::Value>> {
+        let account = if let Some(account) = self.account {
+            account
+        } else if let Some(Some(account)) =
+            CliConfig::load_profile(&self.profile.profile)?.map(|p| p.account)
+        {
+            account
+        } else {
+            return Err(CliError::CommandArgumentError(
+                "Please provide an account using --account or run aptos init".to_string(),
+            ));
+        };
+
+        let client = Client::new(self.rest_options.url(&self.profile.profile)?);
         let response: Vec<Resource> = client
-            .get_account_resources(self.account)
-            .await?
+            .get_account_resources(account)
+            .await
+            .map_err(|err| CliError::ApiError(err.to_string()))?
             .into_inner();
         Ok(response
             .iter()
             .map(|json| json.data.clone())
             .collect::<Vec<serde_json::Value>>())
-    }
-
-    // TODO: Format this in a reasonable way while providing all information
-    // add options like --tokens --nfts etc
-    pub async fn execute(self) -> CliResult {
-        let result = self
-            .get_resources()
-            .await
-            .map_err(|err| CommonError::UnexpectedError(err.to_string()));
-        to_common_result(result)
     }
 }

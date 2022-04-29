@@ -6,73 +6,67 @@
 //! TODO: Examples
 //!
 
-use crate::{
-    common::types::{
-        account_address_from_public_key, EncodingOptions, ExtractPublicKey, NodeOptions,
-        PrivateKeyInputOptions, PublicKeyInputOptions,
+use crate::common::{
+    init::DEFAULT_FAUCET_URL,
+    types::{
+        account_address_from_public_key, CliConfig, CliError, CliTypedResult, EncodingOptions,
+        ProfileOptions, WriteTransactionOptions,
     },
-    CliResult, Error as CommonError,
 };
-use anyhow::Error;
 use aptos_crypto::{ed25519::Ed25519PrivateKey, PrivateKey};
 use aptos_rest_client::{Client as RestClient, Response, Transaction};
-use aptos_sdk::{
-    transaction_builder::TransactionFactory,
-    types::{chain_id::ChainId, LocalAccount},
-};
+use aptos_sdk::{transaction_builder::TransactionFactory, types::LocalAccount};
 use aptos_transaction_builder::aptos_stdlib;
 use aptos_types::account_address::AccountAddress;
 use clap::Parser;
-use reqwest;
+use reqwest::Url;
 
 /// Command to create a new account on-chain
 ///
 #[derive(Debug, Parser)]
 pub struct CreateAccount {
     #[clap(flatten)]
-    private_key_input_options: PrivateKeyInputOptions,
-
-    #[clap(flatten)]
     encoding_options: EncodingOptions,
-
     #[clap(flatten)]
-    node: NodeOptions,
-
+    write_options: WriteTransactionOptions,
     #[clap(flatten)]
-    public_key_input_options: PublicKeyInputOptions,
-
-    /// Chain ID
-    #[clap(long)]
-    chain_id: u8,
-
-    /// Flag for using faucet
+    profile: ProfileOptions,
+    /// Address to create account for
+    #[clap(long, parse(try_from_str=crate::common::types::load_account_arg))]
+    account: AccountAddress,
+    /// Flag for using faucet to create the account
     #[clap(long)]
     use_faucet: bool,
+    /// URL for the faucet
+    #[clap(long)]
+    faucet_url: Option<Url>,
+    /// Initial coins to fund when using the faucet
+    #[clap(long, default_value = "10000")]
+    initial_coins: u64,
 }
 
 impl CreateAccount {
-    async fn get_account(
-        &self,
-        account: AccountAddress,
-    ) -> Result<serde_json::Value, reqwest::Error> {
-        reqwest::get(format!("{}accounts/{}", self.node.url, account))
-            .await?
-            .json()
-            .await
-    }
+    pub async fn execute(self) -> CliTypedResult<String> {
+        let address = self.account;
+        if self.use_faucet {
+            let faucet_url = if let Some(faucet_url) = self.faucet_url {
+                faucet_url
+            } else if let Some(Some(url)) =
+                CliConfig::load_profile(&self.profile.profile)?.map(|profile| profile.faucet_url)
+            {
+                Url::parse(&url)
+                    .map_err(|err| CliError::UnableToParse("config faucet_url", err.to_string()))?
+            } else {
+                Url::parse(DEFAULT_FAUCET_URL).map_err(|err| {
+                    CliError::UnexpectedError(format!("Failed to parse default faucet URL {}", err))
+                })?
+            };
 
-    async fn get_sequence_number(&self, account: AccountAddress) -> Result<u64, CommonError> {
-        let account_response = self
-            .get_account(account)
-            .await
-            .map_err(|err| CommonError::UnexpectedError(err.to_string()))?;
-        let sequence_number = &account_response["sequence_number"];
-        match sequence_number.as_str() {
-            Some(number) => Ok(number.parse::<u64>().unwrap()),
-            None => Err(CommonError::UnexpectedError(
-                "Sequence number not found".to_string(),
-            )),
+            Self::create_account_with_faucet(faucet_url, self.initial_coins, address).await
+        } else {
+            self.create_account_with_key(address).await
         }
+        .map(|_| format!("Account Created at {}", address))
     }
 
     async fn post_account(
@@ -81,73 +75,68 @@ impl CreateAccount {
         sender_key: Ed25519PrivateKey,
         sender_address: AccountAddress,
         sequence_number: u64,
-    ) -> Result<Response<Transaction>, Error> {
-        let client = RestClient::new(reqwest::Url::clone(&self.node.url));
-        let chain_id = ChainId::new(self.chain_id);
-        let transaction_factory = TransactionFactory::new(chain_id)
-            .with_gas_unit_price(1)
-            .with_max_gas_amount(1000);
+    ) -> CliTypedResult<Response<Transaction>> {
+        let client = RestClient::new(Url::clone(
+            &self.write_options.rest_options.url(&self.profile.profile)?,
+        ));
+        let transaction_factory =
+            TransactionFactory::new(self.write_options.chain_id(&self.profile.profile).await?)
+                .with_gas_unit_price(1)
+                .with_max_gas_amount(self.write_options.max_gas);
         let sender_account = &mut LocalAccount::new(sender_address, sender_key, sequence_number);
         let transaction = sender_account.sign_with_transaction_builder(
             transaction_factory
                 .payload(aptos_stdlib::encode_create_account_script_function(address)),
         );
-        client.submit_and_wait(&transaction).await
+        client
+            .submit_and_wait(&transaction)
+            .await
+            .map_err(|err| CliError::ApiError(err.to_string()))
     }
 
-    async fn create_account_with_faucet(self, address: AccountAddress) -> Result<String, Error> {
+    pub async fn create_account_with_faucet(
+        faucet_url: Url,
+        initial_coins: u64,
+        address: AccountAddress,
+    ) -> CliTypedResult<()> {
         let response = reqwest::Client::new()
             // TODO: Currently, we are just using mint 0 to create an account using the faucet
             // We should make a faucet endpoint for creating an account
             .post(format!(
-                "{}/mint?amount={}&auth_key={}",
-                "https://faucet.devnet.aptoslabs.com", "0", address
+                "{}mint?amount={}&auth_key={}",
+                faucet_url, initial_coins, address
             ))
             .send()
-            .await?;
+            .await
+            .map_err(|err| CliError::ApiError(err.to_string()))?;
         if response.status() == 200 {
-            Ok(response.status().to_string())
+            Ok(())
         } else {
-            Err(Error::new(CommonError::UnexpectedError(format!(
+            Err(CliError::ApiError(format!(
                 "Faucet issue: {}",
                 response.status()
-            ))))
+            )))
         }
     }
 
-    async fn create_account_with_key(self, address: AccountAddress) -> Result<String, Error> {
+    async fn create_account_with_key(self, address: AccountAddress) -> CliTypedResult<()> {
+        let client = RestClient::new(Url::clone(
+            &self.write_options.rest_options.url(&self.profile.profile)?,
+        ));
         let sender_private_key = self
-            .private_key_input_options
-            .extract_private_key(self.encoding_options.encoding)?;
+            .write_options
+            .private_key_options
+            .extract_private_key(self.encoding_options.encoding, &self.profile.profile)?;
         let sender_public_key = sender_private_key.public_key();
         let sender_address = account_address_from_public_key(&sender_public_key);
-        let sequence_number = self.get_sequence_number(sender_address).await;
-        match sequence_number {
-            Ok(sequence_number) => self
-                .post_account(address, sender_private_key, sender_address, sequence_number)
-                .await
-                .map(|_| "Success".to_string()),
-            Err(err) => Err(Error::new(err)),
-        }
-    }
-
-    async fn execute_inner(self, address: AccountAddress) -> Result<String, Error> {
-        if self.use_faucet {
-            self.create_account_with_faucet(address).await
-        } else {
-            self.create_account_with_key(address).await
-        }
-    }
-
-    pub async fn execute(self) -> CliResult {
-        let public_key_to_create = self
-            .public_key_input_options
-            .extract_public_key(self.encoding_options.encoding)
-            .map_err(|err| err.to_string())?;
-        let new_address = account_address_from_public_key(&public_key_to_create);
-        self.execute_inner(new_address)
+        let sequence_number = client
+            .get_account(sender_address)
             .await
-            .map(|_| format!("Account Created at {}", new_address))
-            .map_err(|err| err.to_string())
+            .map_err(|err| CliError::ApiError(err.to_string()))?
+            .into_inner()
+            .sequence_number;
+        self.post_account(address, sender_private_key, sender_address, sequence_number)
+            .await?;
+        Ok(())
     }
 }

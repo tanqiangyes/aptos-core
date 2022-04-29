@@ -68,7 +68,7 @@ async fn main() {
     );
 
     let key: ed25519::Ed25519PrivateKey = EncodingType::BCS
-        .load_key(Path::new(&args.mint_key_file_path))
+        .load_key("Ed25519PrivateKey", Path::new(&args.mint_key_file_path))
         .unwrap();
 
     let faucet_address: AccountAddress =
@@ -245,6 +245,7 @@ mod tests {
                     success: true,
                     vm_status: "Executed".to_string(),
                     accumulator_root_hash: HashValue::zero().into(),
+                    changes: vec![],
                 };
                 let serializable_txn: aptos_rest_client::aptos_api_types::Transaction = (
                     txn.as_signed_user_txn().unwrap(),

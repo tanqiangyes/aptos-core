@@ -4,6 +4,7 @@
 import assert from "assert";
 
 import { Account, RestClient, TESTNET_URL, FAUCET_URL, FaucetClient } from "./first_transaction";
+import fetch from "cross-fetch";
 
 export class TokenClient {
     restClient: RestClient;
@@ -19,6 +20,7 @@ export class TokenClient {
         await this.restClient.waitForTransaction(res["hash"])
     }
 
+//:!:>section_1
     /** Creates a new collection within the specified account */
     async createCollection(account: Account, description: string, name: string, uri: string) {
         const payload: { function: string; arguments: string[]; type: string; type_arguments: any[] } = {
@@ -33,7 +35,9 @@ export class TokenClient {
         };
         await this.submitTransactionHelper(account, payload);
     }
+//<:!:section_1
 
+//:!:>section_2
     async createToken(
         account: Account,
         collection_name: string,
@@ -55,7 +59,9 @@ export class TokenClient {
         }
         await this.submitTransactionHelper(account, payload);
     }
+//<:!:section_2
 
+//:!:>section_4
     async offerToken(
         account: Account,
         receiver: string,
@@ -75,7 +81,9 @@ export class TokenClient {
         }
         await this.submitTransactionHelper(account, payload);
     }
+//<:!:section_4
 
+//:!:>section_5
     async claimToken(
         account: Account,
         sender: string,
@@ -93,6 +101,7 @@ export class TokenClient {
         }
         await this.submitTransactionHelper(account, payload);
     }
+//<:!:section_5
 
     async cancelTokenOffer(
         account: Account,
@@ -112,28 +121,45 @@ export class TokenClient {
         await this.submitTransactionHelper(account, payload);
     }
 
+//:!:>section_3
+    async tableItem(handle: string, keyType: string, valueType: string, key: any): Promise<any> {
+        const response = await fetch(`${this.restClient.url}/tables/${handle}/item`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                "key_type": keyType,
+                "value_type": valueType,
+                "key": key
+            })
+        });
+
+        if (response.status == 404) {
+            return null
+        } else if (response.status != 200) {
+            assert(response.status == 200, await response.text());
+        } else {
+            return await response.json();
+        }
+    }
+
     /** Retrieve the token's creation_num, which is useful for non-creator operations */
     async getTokenId(creator: string, collection_name: string, token_name: string): Promise<number> {
-        const resources = await this.restClient.accountResources(creator);
-        let collections = []
-        let tokens = []
-        for (var resource in resources) {
-            if (resources[resource]["type"] == "0x1::Token::Collections") {
-                collections = resources[resource]["data"]["collections"]["data"];
-            }
-        } 
-        for (var collection in collections) {
-            if (collections[collection]["key"] == collection_name) {
-                tokens = collections[collection]["value"]["tokens"]["data"];
-            }
-        }
-        for (var token in tokens) {
-            if (tokens[token]["key"] == token_name) {
-                return parseInt(tokens[token]["value"]["id"]["creation_num"]);
-            }
-        }
-        assert(false);
+        let collections = await this.restClient.accountResource(creator, "0x1::Token::Collections");
+        let collection = await this.tableItem(
+            collections["data"]["collections"]["handle"],
+            "0x1::ASCII::String",
+            "0x1::Token::Collection",
+            collection_name,
+        );
+        let tokenData = await this.tableItem(
+            collection["tokens"]["handle"],
+            "0x1::ASCII::String",
+            "0x1::Token::TokenData",
+            token_name,
+        );
+        return tokenData["id"]["creation_num"]
     }
+//<:!:section_3
   }
 
 

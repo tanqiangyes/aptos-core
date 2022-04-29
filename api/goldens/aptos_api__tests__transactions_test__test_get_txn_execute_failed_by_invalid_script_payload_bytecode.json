@@ -1,18 +1,45 @@
 {
   "type": "user_transaction",
   "version": "2",
-  "hash": "0x2bf7670f9cea191af66917f1a2d3592fe82c9d004b66ab62ac8162e6d45af145",
-  "state_root_hash": "0x613919682e21fac2dfeb169c98f88a8e265b2cc107c529e55c5cc393e73413e1",
+  "hash": "0xd99666ee3f06d5d564d1e8bf5955a020e7634fd9b539c2b6bab071670548f625",
+  "state_root_hash": "0x590f869a35bfa866f85baca8bd5fbab5c53f7911bc70c10d8bb29b0187d89b1d",
   "event_root_hash": "0x414343554d554c41544f525f504c414345484f4c4445525f4841534800000000",
   "gas_used": "1",
   "success": false,
   "vm_status": "Move bytecode deserialization / verification failed, including script function not found or invalid arguments",
-  "accumulator_root_hash": "0x49e4e43e78aeb3a52f1c524fea2c131968baa63e1b7379518743a13121f8fbc3",
+  "accumulator_root_hash": "0xd38ac0cb812f8fda728639cf6f1ba9262d074a533cdff884c681078af6a30aa1",
+  "changes": [
+    {
+      "type": "write_resource",
+      "address": "0xa550c18",
+      "state_key_hash": "0x04a62513032e695c923632ca1b9248d11e49c9b1e83bba39974adf50bbabdd8f",
+      "data": {
+        "type": "0x1::Account::Account",
+        "data": {
+          "authentication_key": "0x7deeccb1080854f499ec8b4c1b213b82c5e34b925cf6875fec02d4b77adbd2d6",
+          "self_address": "0xa550c18",
+          "sequence_number": "1"
+        }
+      }
+    },
+    {
+      "type": "write_resource",
+      "address": "0xa550c18",
+      "state_key_hash": "0x0429c60e9038d8b98b6cbddf810e3517cf3b029b8655d701962e6b1bfec59e04",
+      "data": {
+        "type": "0x1::TestCoin::Balance",
+        "data": {
+          "coin": {
+            "value": "18446744073709551614"
+          }
+        }
+      }
+    }
+  ],
   "sender": "0xa550c18",
   "sequence_number": "0",
   "max_gas_amount": "2000",
   "gas_unit_price": "0",
-  "gas_currency_code": "XUS",
   "expiration_timestamp_secs": "18446744073709551615",
   "payload": {
     "type": "script_payload",
@@ -26,7 +53,7 @@
   "signature": {
     "type": "ed25519_signature",
     "public_key": "0xb9c6ee1630ef3e711144a648db06bbb2284f7274cfbee53ffcee503cc1a49200",
-    "signature": "0x7c0138e74c71b9178ecedcd2feb19379db4f867c17cbb9eca630d3dce4017e1fe1802afedd1648edbf1cca16064abf9a4a52964eb5cc7b776eef2136f3d9bb04"
+    "signature": "0x13f4a33ffb8189fc0c13875055ca2f8e6b22b2a1ea9f9348cb5e68613c36aea8c2530b03ef27ca6a393b7484e2afe4dc8c4128a84b77bedeef4b2bff8651fa03"
   },
   "events": [],
   "timestamp": "1"

@@ -5,23 +5,13 @@ chain:
 
 aptos_chains:
   devnet:
-    id: 12
-    waypoint: 0:86009787689d22b7701f0195c28abb7f91a070890698f3275a96aae5a6ab46d0
+    id: 10
+    waypoint: 0:d81703c4438633e1dee10890da70d728c7bf524e6809801b112d322eb23c42ff
 
 fullnode_identity:
   # Set this to start fullnode from an existing key.
   # If not set, it will generate a random one on startup.
 
-fullnode_inbound_rate_limit:
-  enabled: true
-  ip_byte_bucket_rate: 1048576
-  ip_byte_bucket_size: 1048576
-  initial_bucket_fill_percentage: 25
-fullnode_outbound_rate_limit:
-  enabled: true
-  ip_byte_bucket_rate: 1048576
-  ip_byte_bucket_size: 1048576
-  initial_bucket_fill_percentage: 25
 fullnode_max_inbound_connections: 1000
 
 rust_log: info
