@@ -9,8 +9,6 @@
 //! It relays read/write operations on the physical storage via [`schemadb`] to the underlying
 //! Key-Value storage system, and implements aptos data structures on top of it.
 
-#[cfg(any(feature = "aptossum"))]
-pub mod aptossum;
 // Used in this and other crates for testing.
 #[cfg(any(test, feature = "fuzzing"))]
 pub mod test_helper;
@@ -73,6 +71,7 @@ use aptos_types::{
     state_proof::StateProof,
     state_store::{
         state_key::StateKey,
+        state_key_prefix::StateKeyPrefix,
         state_value::{
             StateKeyAndValue, StateValue, StateValueChunkWithProof, StateValueWithProof,
         },
@@ -679,6 +678,17 @@ impl DbReader for AptosDB {
         })
     }
 
+    fn get_state_values_by_key_prefix(
+        &self,
+        key_prefix: &StateKeyPrefix,
+        version: Version,
+    ) -> Result<HashMap<StateKey, StateValue>> {
+        gauged_api("get_state_values_by_key_prefix", || {
+            self.state_store
+                .get_values_by_key_prefix(key_prefix, version)
+        })
+    }
+
     fn get_latest_ledger_info_option(&self) -> Result<Option<LedgerInfoWithSignatures>> {
         gauged_api("get_latest_ledger_info_option", || {
             Ok(self.ledger_store.get_latest_ledger_info_option())
@@ -738,10 +748,12 @@ impl DbReader for AptosDB {
         ledger_version: Version,
         fetch_events: bool,
     ) -> Result<Option<TransactionWithProof>> {
-        self.transaction_store
-            .get_transaction_version_by_hash(&hash, ledger_version)?
-            .map(|v| self.get_transaction_with_proof(v, ledger_version, fetch_events))
-            .transpose()
+        gauged_api("get_transaction_by_hash", || {
+            self.transaction_store
+                .get_transaction_version_by_hash(&hash, ledger_version)?
+                .map(|v| self.get_transaction_with_proof(v, ledger_version, fetch_events))
+                .transpose()
+        })
     }
 
     /// Get transaction by version, delegates to `AptosDB::get_transaction_by_hash`
@@ -751,7 +763,9 @@ impl DbReader for AptosDB {
         ledger_version: Version,
         fetch_events: bool,
     ) -> Result<TransactionWithProof> {
-        self.get_transaction_with_proof(version, ledger_version, fetch_events)
+        gauged_api("get_transaction_by_version", || {
+            self.get_transaction_with_proof(version, ledger_version, fetch_events)
+        })
     }
 
     // ======================= State Synchronizer Internal APIs ===================================
@@ -809,12 +823,16 @@ impl DbReader for AptosDB {
 
     /// Get the first version that txn starts existent.
     fn get_first_txn_version(&self) -> Result<Option<Version>> {
-        self.transaction_store.get_first_txn_version()
+        gauged_api("get_first_txn_version", || {
+            self.transaction_store.get_first_txn_version()
+        })
     }
 
     /// Get the first version that write set starts existent.
     fn get_first_write_set_version(&self) -> Result<Option<Version>> {
-        self.transaction_store.get_first_write_set_version()
+        gauged_api("get_first_write_set_version", || {
+            self.transaction_store.get_first_write_set_version()
+        })
     }
 
     /// Gets a batch of transactions for the purpose of synchronizing state to another node.
@@ -978,7 +996,7 @@ impl DbReader for AptosDB {
         version: Version,
         ledger_version: Version,
     ) -> Result<StateValueWithProof> {
-        gauged_api("get_value_with_proof", || {
+        gauged_api("get_state_value_with_proof", || {
             ensure!(
                 version <= ledger_version,
                 "The queried version {} should be equal to or older than ledger version {}.",
@@ -1192,10 +1210,13 @@ impl DbReader for AptosDB {
         })
     }
 
-    fn get_state_prune_window(&self) -> Option<usize> {
-        self.pruner
-            .as_ref()
-            .map(|x| x.get_state_store_pruner_window() as usize)
+    fn get_state_prune_window(&self) -> Result<Option<usize>> {
+        gauged_api("get_state_prune_window", || {
+            Ok(self
+                .pruner
+                .as_ref()
+                .map(|x| x.get_state_store_pruner_window() as usize))
+        })
     }
 }
 

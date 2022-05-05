@@ -29,15 +29,19 @@ use aptos_types::{
     block_metadata::BlockMetadata,
     on_chain_config::{VMConfig, VMPublishingOption, Version},
     transaction::{
-        ChangeSet, ModuleBundle, SignatureCheckedTransaction, SignedTransaction, Transaction,
-        TransactionOutput, TransactionPayload, TransactionStatus, VMValidatorResult,
+        ChangeSet, ExecutionStatus, ModuleBundle, SignatureCheckedTransaction, SignedTransaction,
+        Transaction, TransactionOutput, TransactionPayload, TransactionStatus, VMValidatorResult,
         WriteSetPayload,
     },
-    vm_status::{KeptVMStatus, StatusCode, VMStatus},
+    vm_status::{StatusCode, VMStatus},
     write_set::{WriteSet, WriteSetMut},
 };
 use fail::fail_point;
-use move_binary_format::{errors::VMResult, CompiledModule};
+use move_binary_format::{
+    access::ModuleAccess,
+    errors::{verification_error, Location, VMResult},
+    CompiledModule, IndexKind,
+};
 use move_core_types::{
     account_address::AccountAddress,
     gas_schedule::{GasAlgebra, GasUnits},
@@ -269,7 +273,7 @@ impl AptosVM {
                 session,
                 gas_status.remaining_gas(),
                 txn_data,
-                KeptVMStatus::Executed,
+                ExecutionStatus::Success,
             )?,
         ))
     }
@@ -359,6 +363,33 @@ impl AptosVM {
         }
     }
 
+    fn verify_module_bundle<S: MoveResolverExt>(
+        session: &mut SessionExt<S>,
+        module_bundle: &ModuleBundle,
+    ) -> VMResult<()> {
+        for module_blob in module_bundle.iter() {
+            match CompiledModule::deserialize(module_blob.code()) {
+                Ok(module) => {
+                    // verify the module doesn't exist
+                    if session
+                        .get_data_store()
+                        .load_module(&module.self_id())
+                        .is_ok()
+                    {
+                        return Err(verification_error(
+                            StatusCode::DUPLICATE_MODULE_NAME,
+                            IndexKind::AddressIdentifier,
+                            module.self_handle_idx().0,
+                        )
+                        .finish(Location::Undefined));
+                    }
+                }
+                Err(err) => return Err(err.finish(Location::Undefined)),
+            }
+        }
+        Ok(())
+    }
+
     fn execute_modules<S: MoveResolverExt>(
         &self,
         mut session: SessionExt<S>,
@@ -384,6 +415,7 @@ impl AptosVM {
             .charge_intrinsic_gas(txn_data.transaction_size())
             .map_err(|e| e.into_vm_status())?;
 
+        Self::verify_module_bundle(&mut session, modules)?;
         session
             .publish_module_bundle(modules.clone().into_inner(), module_address, gas_status)
             .map_err(|e| e.into_vm_status())?;
@@ -612,7 +644,7 @@ impl AptosVM {
             session,
             gas_status.remaining_gas(),
             &txn_data,
-            KeptVMStatus::Executed,
+            ExecutionStatus::Success,
         )?;
         Ok((VMStatus::Executed, output))
     }
@@ -749,7 +781,7 @@ impl AptosVM {
                 write_set,
                 events,
                 0,
-                TransactionStatus::Keep(KeptVMStatus::Executed),
+                TransactionStatus::Keep(ExecutionStatus::Success),
             ),
         ))
     }
@@ -934,7 +966,7 @@ impl VMAdapter for AptosVM {
                     WriteSet::default(),
                     Vec::new(),
                     0,
-                    TransactionStatus::Keep(KeptVMStatus::Executed),
+                    TransactionStatus::Keep(ExecutionStatus::Success),
                 );
                 (VMStatus::Executed, output, Some("state_checkpoint".into()))
             }

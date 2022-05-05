@@ -1,59 +1,132 @@
 // Copyright (c) Aptos
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useState } from 'react'
+import React, { useEffect } from 'react'
+import { AptosAccount } from 'aptos'
 import { Buffer } from 'buffer'
-import { KEY_LENGTH } from '../constants'
-import { useNavigate } from 'react-router-dom'
-import { useGlobalState } from '../GlobalState'
-import { createNewAccount, loginAccount } from '../utils/account'
+import {
+  useNavigate
+} from 'react-router-dom'
+import useWalletState from '../hooks/useWalletState'
+import {
+  Box,
+  Button,
+  Center,
+  Flex,
+  Heading,
+  Input,
+  InputGroup,
+  InputRightAddon,
+  Text,
+  useColorMode,
+  VStack
+} from '@chakra-ui/react'
+import { SubmitHandler, useForm } from 'react-hook-form'
+import { AptosBlackLogo, AptosWhiteLogo } from '../components/AptosLogo'
+import withSimulatedExtensionContainer from '../components/WithSimulatedExtensionContainer'
+import { getAccountResources } from './Wallet'
+import ChakraLink from '../components/ChakraLink'
+import { secondaryBgColor, secondaryErrorMessageColor } from '../constants'
 
-import './App.css'
+type Inputs = Record<string, any>
 
-export default function Login () {
-  const [key, setKey] = useState('')
-  const [error, setError] = useState('')
-  const [, dispatch] = useGlobalState()
+export const secondaryTextColor = {
+  dark: 'gray.400',
+  light: 'gray.500'
+}
+
+function Login () {
+  const { colorMode } = useColorMode()
+  const { aptosAccount, updateWalletState } = useWalletState()
+  const { register, watch, handleSubmit, setError, formState: { errors } } = useForm()
+  const key: string = watch('privateKey')
   const navigate = useNavigate()
 
-  function handleSubmit (event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const result = loginAccount(key)
-    if (result.isOk()) {
-      const account = result.value
-      dispatch({ account })
+  const onSubmit: SubmitHandler<Inputs> = async (data, event) => {
+    event?.preventDefault()
+    try {
+      const encodedKey = Uint8Array.from(Buffer.from(key, 'hex'))
+      const account = new AptosAccount(encodedKey, undefined)
+      const response = await getAccountResources({ address: account.address().hex() })
+      if (response?.status !== 200) {
+        setError('privateKey', { type: 'custom', message: 'Account not found' })
+        return
+      }
+      updateWalletState({ aptosAccountState: account })
       navigate('/wallet')
-    } else {
-      setError(result.error.message)
+    } catch (err) {
+      setError('privateKey', { type: 'custom', message: 'Invalid private key' })
     }
   }
 
-  function onChange (event: React.ChangeEvent<HTMLInputElement>) {
-    setKey(event.target.value)
-    setError('')
-  }
-
-  function onGenerateClick (event: React.MouseEvent<HTMLButtonElement>) {
-    const result = createNewAccount()
-    if (result.isOk()) {
-      const account = result.value
-      const accountKey = Buffer.from(account.signingKey.secretKey.buffer).toString('hex').slice(0, KEY_LENGTH)
-      setKey(accountKey)
-    } else {
-      setError(result.error.message)
+  useEffect(() => {
+    if (aptosAccount) {
+      navigate('/wallet')
     }
-  }
+  }, [])
 
   return (
-    <div className="App-header">
-      <h2>Aptos Wallet</h2>
-      <form onSubmit={handleSubmit}>
-        <input onChange={onChange} value={key}/>
-      </form>
-      <small className="Error-message">{error}</small>
-      <button onClick={onGenerateClick}>
-          Generate Account
-      </button>
-    </div>
+    <VStack
+      bgColor={secondaryBgColor[colorMode]}
+      justifyContent="center"
+      spacing={4}
+      width="100%"
+      height="100%"
+    >
+      <Flex w="100%" flexDir="column">
+        <Center>
+          <Box width="75px" pb={4}>
+            {
+              (colorMode === 'dark')
+                ? <AptosWhiteLogo />
+                : <AptosBlackLogo />
+            }
+          </Box>
+        </Center>
+        <Heading textAlign="center">Wallet</Heading>
+        <Text textAlign="center" pb={8} color={secondaryTextColor[colorMode]}>The official Aptos crypto wallet</Text>
+        <form onSubmit={handleSubmit(onSubmit)}>
+          <VStack spacing={4}>
+            <Center minW="100%" px={4}>
+              <Box>
+                <InputGroup>
+                  <Input
+                    maxW="350px"
+                    { ...register('privateKey')}
+                    variant="filled"
+                    required
+                    placeholder='Private key...'
+                  />
+                  <InputRightAddon>
+                    <Button type='submit' variant="unstyled">
+                      Submit
+                    </Button>
+                  </InputRightAddon>
+                </InputGroup>
+                <Center>
+                  <Text fontSize="xs" color={secondaryErrorMessageColor[colorMode]}>
+                    {(errors?.privateKey?.message)}
+                  </Text>
+                </Center>
+              </Box>
+            </Center>
+            <ChakraLink to="/create-wallet">
+              <Button colorScheme="teal" variant="ghost">
+                Create a new wallet
+              </Button>
+            </ChakraLink>
+          </VStack>
+        </form>
+      </Flex>
+      {/* TODO: Fill this in later */}
+      {/* <HStack spacing={2} color={secondaryTextColor[colorMode]}>
+        <QuestionIcon />
+        <ChakraLink to="/help" fontSize="xs">
+          Help
+        </ChakraLink>
+      </HStack> */}
+    </VStack>
   )
 }
+
+export default withSimulatedExtensionContainer(Login)

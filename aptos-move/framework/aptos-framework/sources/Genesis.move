@@ -69,7 +69,7 @@ module AptosFramework::Genesis {
             b"script_prologue",
             b"module_prologue",
             b"writeset_prologue",
-            b"script_prologue",
+            b"multi_agent_script_prologue",
             b"epilogue",
             b"writeset_epilogue",
             false,
@@ -119,7 +119,7 @@ module AptosFramework::Genesis {
     /// public key in `consensus_pubkeys`.
     /// Finally, each validator must specify the network address
     /// (see types/src/network_address/mod.rs) for itself and its full nodes.
-    fun create_initialize_validators(
+    public(script) fun create_initialize_validators(
         core_resource_account: signer,
         owners: vector<address>,
         owner_auth_keys: vector<vector<u8>>,

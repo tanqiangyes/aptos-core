@@ -5,6 +5,7 @@ use crate::{
     access_path::AccessPath,
     account_address::{self, AccountAddress},
     account_config::{AccountResource, BalanceResource},
+    account_state::AccountState,
     account_state_blob::AccountStateBlob,
     block_info::{BlockInfo, Round},
     block_metadata::BlockMetadata,
@@ -17,14 +18,14 @@ use crate::{
     proof::TransactionInfoListWithProof,
     state_store::{state_key::StateKey, state_value::StateValue},
     transaction::{
-        ChangeSet, Module, ModuleBundle, RawTransaction, Script, SignatureCheckedTransaction,
-        SignedTransaction, Transaction, TransactionArgument, TransactionInfo,
-        TransactionListWithProof, TransactionPayload, TransactionStatus, TransactionToCommit,
-        Version, WriteSetPayload,
+        ChangeSet, ExecutionStatus, Module, ModuleBundle, RawTransaction, Script,
+        SignatureCheckedTransaction, SignedTransaction, Transaction, TransactionArgument,
+        TransactionInfo, TransactionListWithProof, TransactionPayload, TransactionStatus,
+        TransactionToCommit, Version, WriteSetPayload,
     },
     validator_info::ValidatorInfo,
     validator_signer::ValidatorSigner,
-    vm_status::{KeptVMStatus, VMStatus},
+    vm_status::VMStatus,
     write_set::{WriteOp, WriteSet, WriteSetMut},
 };
 use aptos_crypto::{
@@ -43,7 +44,7 @@ use proptest::{
 use proptest_derive::Arbitrary;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     convert::{TryFrom, TryInto},
     iter::Iterator,
 };
@@ -767,7 +768,7 @@ pub struct TransactionToCommitGen {
     /// Gas used.
     gas_used: u64,
     /// Transaction status
-    status: KeptVMStatus,
+    status: ExecutionStatus,
 }
 
 impl TransactionToCommitGen {
@@ -783,21 +784,34 @@ impl TransactionToCommitGen {
             .collect();
         // Account states must be materialized last, to reflect the latest account and event
         // sequence numbers.
-        let account_states = self
+        let account_states: HashMap<AccountAddress, AccountStateBlob> = self
             .account_state_gens
             .into_iter()
             .map(|(index, blob_gen)| {
                 (
-                    StateKey::AccountAddressKey(universe.get_account_info(index).address),
-                    StateValue::from(blob_gen.materialize(index, universe)),
+                    universe.get_account_info(index).address,
+                    blob_gen.materialize(index, universe),
                 )
             })
             .collect();
 
+        let mut state_updates = HashMap::new();
+        for (account_address, blob) in account_states {
+            AccountState::try_from(&blob)
+                .unwrap()
+                .iter()
+                .for_each(|(key, value)| {
+                    state_updates.insert(
+                        StateKey::AccessPath(AccessPath::new(account_address, key.clone())),
+                        StateValue::from(value.clone()),
+                    );
+                });
+        }
+
         TransactionToCommit::new(
             Transaction::UserTransaction(transaction),
             TransactionInfo::new_placeholder(self.gas_used, self.status),
-            account_states,
+            state_updates,
             None,
             self.write_set,
             events,
@@ -826,7 +840,7 @@ impl Arbitrary for TransactionToCommitGen {
             vec((any::<Index>(), any::<AccountStateBlobGen>()), 0..=1),
             any::<WriteSet>(),
             any::<u64>(),
-            any::<KeptVMStatus>(),
+            any::<ExecutionStatus>(),
         )
             .prop_map(
                 |(sender, event_emitters, mut touched_accounts, write_set, gas_used, status)| {
