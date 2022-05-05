@@ -3,7 +3,7 @@
 
 use super::Test;
 use crate::{CoreContext, Result, TestReport};
-use aptos_rest_client::Client as RestClient;
+use aptos_rest_client::{Client as RestClient, PendingTransaction};
 use aptos_sdk::{
     crypto::ed25519::Ed25519PublicKey,
     move_types::identifier::Identifier,
@@ -83,6 +83,24 @@ impl<'t> AptosContext<'t> {
         self.public_info.mint(addr, amount).await
     }
 
+    pub async fn create_and_fund_user_account(&mut self, amount: u64) -> Result<LocalAccount> {
+        let account = self.random_account();
+        self.create_user_account(account.public_key()).await?;
+        self.mint(account.address(), amount).await?;
+        Ok(account)
+    }
+
+    pub async fn transfer(
+        &self,
+        from_account: &mut LocalAccount,
+        to_account: &LocalAccount,
+        amount: u64,
+    ) -> Result<PendingTransaction> {
+        self.public_info
+            .transfer(from_account, to_account, amount)
+            .await
+    }
+
     pub async fn get_balance(&self, address: AccountAddress) -> Option<u64> {
         self.public_info.get_balance(address).await
     }
@@ -120,7 +138,7 @@ impl<'t> AptosPublicInfo<'t> {
         let create_account_txn =
             self.root_account
                 .sign_with_transaction_builder(self.transaction_factory().payload(
-                    aptos_stdlib::encode_create_account_script_function(auth_key.derived_address()),
+                    aptos_stdlib::encode_account_create_account(auth_key.derived_address()),
                 ));
         self.rest_client
             .submit_and_wait(&create_account_txn)
@@ -131,10 +149,24 @@ impl<'t> AptosPublicInfo<'t> {
     pub async fn mint(&mut self, addr: AccountAddress, amount: u64) -> Result<()> {
         let mint_txn = self.root_account.sign_with_transaction_builder(
             self.transaction_factory()
-                .payload(aptos_stdlib::encode_mint_script_function(addr, amount)),
+                .payload(aptos_stdlib::encode_test_coin_mint(addr, amount)),
         );
         self.rest_client.submit_and_wait(&mint_txn).await?;
         Ok(())
+    }
+
+    pub async fn transfer(
+        &self,
+        from_account: &mut LocalAccount,
+        to_account: &LocalAccount,
+        amount: u64,
+    ) -> Result<PendingTransaction> {
+        let tx = from_account.sign_with_transaction_builder(self.transaction_factory().payload(
+            aptos_stdlib::encode_test_coin_transfer(to_account.address(), amount),
+        ));
+        let pending_txn = self.rest_client.submit(&tx).await?.into_inner();
+        self.rest_client.wait_for_transaction(&pending_txn).await?;
+        Ok(pending_txn)
     }
 
     pub fn transaction_factory(&self) -> TransactionFactory {

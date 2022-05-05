@@ -1,7 +1,7 @@
 // Copyright (c) Aptos
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashSet, convert::TryFrom};
+use std::collections::HashSet;
 
 use proptest::{
     collection::{hash_map, vec},
@@ -10,51 +10,30 @@ use proptest::{
 
 use aptos_jellyfish_merkle::restore::JellyfishMerkleRestore;
 use aptos_temppath::TempPath;
-use aptos_types::{account_address::AccountAddress, account_state_blob::AccountStateBlob};
+use aptos_types::{
+    access_path::AccessPath, account_address::AccountAddress, state_store::state_key::StateKeyTag,
+};
 use storage_interface::StateSnapshotReceiver;
 
 use crate::{pruner, AptosDB};
 
 use super::*;
 
-fn put_account_state_set(
-    store: &StateStore,
-    account_state_set: Vec<(AccountAddress, AccountStateBlob)>,
+fn put_value_set(
+    state_store: &StateStore,
+    value_set: Vec<(StateKey, StateValue)>,
     version: Version,
-    expected_new_nodes: usize,
-    expected_stale_nodes: usize,
-    expected_stale_leaves: usize,
 ) -> HashValue {
     let mut cs = ChangeSet::new();
-    let expected_new_leaves = account_state_set.len();
-    let value_set: HashMap<_, _> = account_state_set
+    let value_set: HashMap<_, _> = value_set
         .iter()
-        .map(|(address, blob)| {
-            (
-                StateKey::AccountAddressKey(*address),
-                StateValue::from(blob.clone()),
-            )
-        })
+        .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    let root = store
+
+    let root = state_store
         .put_value_sets(vec![&value_set], None, version, &mut cs)
         .unwrap()[0];
-    let bumps = cs.counter_bumps(version);
-    assert_eq!(bumps.get(LedgerCounter::NewStateNodes), expected_new_nodes);
-    assert_eq!(
-        bumps.get(LedgerCounter::StaleStateNodes),
-        expected_stale_nodes
-    );
-    assert_eq!(
-        bumps.get(LedgerCounter::NewStateLeaves),
-        expected_new_leaves
-    );
-    assert_eq!(
-        bumps.get(LedgerCounter::StaleStateLeaves),
-        expected_stale_leaves
-    );
-
-    store.db.write_schemas(cs.batch).unwrap();
+    state_store.db.write_schemas(cs.batch).unwrap();
     root
 }
 
@@ -75,56 +54,37 @@ fn prune_stale_indices(
 
 fn verify_value_and_proof(
     store: &StateStore,
-    address: AccountAddress,
-    expected_value: Option<&AccountStateBlob>,
+    key: StateKey,
+    expected_value: Option<&StateValue>,
     version: Version,
     root: HashValue,
 ) {
-    verify_value_and_proof_in_store(store, address, expected_value, version, root);
-    verify_value_index_in_store(store, address, expected_value, version);
+    verify_value_and_proof_in_store(store, key.clone(), expected_value, version, root);
+    verify_value_index_in_store(store, key, expected_value, version);
 }
 
 fn verify_value_and_proof_in_store(
     store: &StateStore,
-    address: AccountAddress,
-    expected_value: Option<&AccountStateBlob>,
+    key: StateKey,
+    expected_value: Option<&StateValue>,
     version: Version,
     root: HashValue,
 ) {
     let (value, proof) = store
-        .get_value_with_proof_by_version(&StateKey::AccountAddressKey(address), version)
+        .get_value_with_proof_by_version(&key, version)
         .unwrap();
-    assert_eq!(
-        value
-            .clone()
-            .map(|x| AccountStateBlob::try_from(x).unwrap())
-            .as_ref(),
-        expected_value
-    );
-    proof
-        .verify(
-            root,
-            StateKey::AccountAddressKey(address).hash(),
-            value.as_ref(),
-        )
-        .unwrap();
+    assert_eq!(value.as_ref(), expected_value);
+    proof.verify(root, key.hash(), value.as_ref()).unwrap();
 }
 
 fn verify_value_index_in_store(
     store: &StateStore,
-    address: AccountAddress,
-    expected_value: Option<&AccountStateBlob>,
+    key: StateKey,
+    expected_value: Option<&StateValue>,
     version: Version,
 ) {
-    let value = store
-        .get_value_by_version(&StateKey::AccountAddressKey(address), version)
-        .unwrap();
-    assert_eq!(
-        value
-            .map(|x| AccountStateBlob::try_from(x).unwrap())
-            .as_ref(),
-        expected_value
-    );
+    let value = store.get_value_by_version(&key, version).unwrap();
+    assert_eq!(value.as_ref(), expected_value);
 }
 
 #[test]
@@ -132,10 +92,8 @@ fn test_empty_store() {
     let tmp_dir = TempPath::new();
     let db = AptosDB::new_for_test(&tmp_dir);
     let store = &db.state_store;
-    let address = AccountAddress::new([1u8; AccountAddress::LENGTH]);
-    assert!(store
-        .get_value_with_proof_by_version(&StateKey::AccountAddressKey(address), 0)
-        .is_err());
+    let key = StateKey::Raw(String::from("test_key").into_bytes());
+    assert!(store.get_value_with_proof_by_version(&key, 0).is_err());
 }
 
 #[test]
@@ -143,59 +101,144 @@ fn test_state_store_reader_writer() {
     let tmp_dir = TempPath::new();
     let db = AptosDB::new_for_test(&tmp_dir);
     let store = &db.state_store;
-    let address1 = AccountAddress::new([1u8; AccountAddress::LENGTH]);
-    let address2 = AccountAddress::new([2u8; AccountAddress::LENGTH]);
-    let address3 = AccountAddress::new([3u8; AccountAddress::LENGTH]);
-    let value1 = AccountStateBlob::from(vec![0x01]);
-    let value1_update = AccountStateBlob::from(vec![0x00]);
-    let value2 = AccountStateBlob::from(vec![0x02]);
-    let value3 = AccountStateBlob::from(vec![0x03]);
+    let key1 = StateKey::Raw(String::from("test_key1").into_bytes());
+    let key2 = StateKey::Raw(String::from("test_key2").into_bytes());
+    let key3 = StateKey::Raw(String::from("test_key3").into_bytes());
+
+    let value1 = StateValue::from(String::from("test_val1").into_bytes());
+    let value1_update = StateValue::from(String::from("test_val1_update").into_bytes());
+    let value2 = StateValue::from(String::from("test_val2").into_bytes());
+    let value3 = StateValue::from(String::from("test_val3").into_bytes());
 
     // Insert address1 with value 1 and verify new states.
-    let mut root = put_account_state_set(
+    let mut root = put_value_set(
         store,
-        vec![(address1, value1.clone())],
+        vec![(key1.clone(), value1.clone())],
         0, /* version */
-        1, /* expected_nodes_created */
-        0, /* expected_nodes_retired */
-        0, /* expected_blobs_retired */
     );
-    verify_value_and_proof(store, address1, Some(&value1), 0, root);
+    verify_value_and_proof(store, key1.clone(), Some(&value1), 0, root);
 
-    verify_value_and_proof(store, address2, None, 0, root);
-    verify_value_and_proof(store, address3, None, 0, root);
+    verify_value_and_proof(store, key2.clone(), None, 0, root);
+    verify_value_and_proof(store, key3.clone(), None, 0, root);
 
     // Insert address 1 with updated value1, address2 with value 2 and address3 with value3 and
     // verify new states.
 
-    root = put_account_state_set(
+    root = put_value_set(
         store,
         vec![
-            (address1, value1_update.clone()),
-            (address2, value2.clone()),
-            (address3, value3.clone()),
+            (key1.clone(), value1_update.clone()),
+            (key2.clone(), value2.clone()),
+            (key3.clone(), value3.clone()),
         ],
         1, /* version */
-        4, /* expected_nodes_created */
-        1, /* expected_nodes_retired */
-        1, /* expected_blobs_retired */
     );
 
-    verify_value_and_proof(store, address1, Some(&value1_update), 1, root);
-    verify_value_and_proof(store, address2, Some(&value2), 1, root);
-    verify_value_and_proof(store, address3, Some(&value3), 1, root);
+    verify_value_and_proof(store, key1, Some(&value1_update), 1, root);
+    verify_value_and_proof(store, key2, Some(&value2), 1, root);
+    verify_value_and_proof(store, key3, Some(&value3), 1, root);
+}
+
+#[test]
+fn test_get_values_by_key_prefix() {
+    let tmp_dir = TempPath::new();
+    let db = AptosDB::new_for_test(&tmp_dir);
+    let store = &db.state_store;
+    let address = AccountAddress::new([12u8; AccountAddress::LENGTH]);
+
+    let key1 = StateKey::AccessPath(AccessPath::new(address, b"state_key1".to_vec()));
+    let key2 = StateKey::AccessPath(AccessPath::new(address, b"state_key2".to_vec()));
+
+    let value1_v0 = StateValue::from(String::from("value1_v0").into_bytes());
+    let value2_v0 = StateValue::from(String::from("value2_v0").into_bytes());
+
+    let account_key_prefx = StateKeyPrefix::new(StateKeyTag::AccessPath, address.to_vec());
+
+    put_value_set(
+        store,
+        vec![
+            (key1.clone(), value1_v0.clone()),
+            (key2.clone(), value2_v0.clone()),
+        ],
+        0,
+    );
+
+    let key_value_map = store
+        .get_values_by_key_prefix(&account_key_prefx, 0)
+        .unwrap();
+    assert_eq!(key_value_map.len(), 2);
+    assert_eq!(*key_value_map.get(&key1).unwrap(), value1_v0);
+    assert_eq!(*key_value_map.get(&key2).unwrap(), value2_v0);
+
+    let key4 = StateKey::AccessPath(AccessPath::new(address, b"state_key4".to_vec()));
+
+    let value2_v1 = StateValue::from(String::from("value2_v1").into_bytes());
+    let value4_v1 = StateValue::from(String::from("value4_v1").into_bytes());
+
+    put_value_set(
+        store,
+        vec![
+            (key2.clone(), value2_v1.clone()),
+            (key4.clone(), value4_v1.clone()),
+        ],
+        1,
+    );
+
+    // Ensure that we still get only values for key1 and key2 for version 0 after the update
+    let key_value_map = store
+        .get_values_by_key_prefix(&account_key_prefx, 0)
+        .unwrap();
+    assert_eq!(key_value_map.len(), 2);
+    assert_eq!(*key_value_map.get(&key1).unwrap(), value1_v0);
+    assert_eq!(*key_value_map.get(&key2).unwrap(), value2_v0);
+
+    // Ensure that key value map for version 1 returns value for key1 at version 0.
+    let key_value_map = store
+        .get_values_by_key_prefix(&account_key_prefx, 1)
+        .unwrap();
+    assert_eq!(key_value_map.len(), 3);
+    assert_eq!(*key_value_map.get(&key1).unwrap(), value1_v0);
+    assert_eq!(*key_value_map.get(&key2).unwrap(), value2_v1);
+    assert_eq!(*key_value_map.get(&key4).unwrap(), value4_v1);
+
+    // Add values for one more account and verify the state
+    let address1 = AccountAddress::new([22u8; AccountAddress::LENGTH]);
+    let key5 = StateKey::AccessPath(AccessPath::new(address1, b"state_key5".to_vec()));
+    let value5_v2 = StateValue::from(String::from("value5_v2").into_bytes());
+
+    let account1_key_prefx = StateKeyPrefix::new(StateKeyTag::AccessPath, address1.to_vec());
+
+    put_value_set(store, vec![(key5.clone(), value5_v2.clone())], 2);
+
+    // address1 did not exist in version 0 and 1.
+    let key_value_map = store
+        .get_values_by_key_prefix(&account1_key_prefx, 0)
+        .unwrap();
+    assert_eq!(key_value_map.len(), 0);
+
+    let key_value_map = store
+        .get_values_by_key_prefix(&account1_key_prefx, 1)
+        .unwrap();
+    assert_eq!(key_value_map.len(), 0);
+
+    let key_value_map = store
+        .get_values_by_key_prefix(&account1_key_prefx, 2)
+        .unwrap();
+    assert_eq!(key_value_map.len(), 1);
+    assert_eq!(*key_value_map.get(&key5).unwrap(), value5_v2);
 }
 
 #[test]
 fn test_retired_records() {
-    let address1 = AccountAddress::new([1u8; AccountAddress::LENGTH]);
-    let address2 = AccountAddress::new([2u8; AccountAddress::LENGTH]);
-    let address3 = AccountAddress::new([3u8; AccountAddress::LENGTH]);
-    let value1 = AccountStateBlob::from(vec![0x01]);
-    let value2 = AccountStateBlob::from(vec![0x02]);
-    let value2_update = AccountStateBlob::from(vec![0x12]);
-    let value3 = AccountStateBlob::from(vec![0x03]);
-    let value3_update = AccountStateBlob::from(vec![0x13]);
+    let key1 = StateKey::Raw(String::from("test_key1").into_bytes());
+    let key2 = StateKey::Raw(String::from("test_key2").into_bytes());
+    let key3 = StateKey::Raw(String::from("test_key3").into_bytes());
+
+    let value1 = StateValue::from(String::from("test_val1").into_bytes());
+    let value2 = StateValue::from(String::from("test_val2").into_bytes());
+    let value2_update = StateValue::from(String::from("test_val2_update").into_bytes());
+    let value3 = StateValue::from(String::from("test_val3").into_bytes());
+    let value3_update = StateValue::from(String::from("test_val3_update").into_bytes());
 
     let tmp_dir = TempPath::new();
     let db = AptosDB::new_for_test(&tmp_dir);
@@ -208,32 +251,23 @@ fn test_retired_records() {
     // | address2 | value2 | value2_update |               |
     // | address3 |        | value3        | value3_update |
     // ```
-    let root0 = put_account_state_set(
+    let root0 = put_value_set(
         store,
-        vec![(address1, value1.clone()), (address2, value2)],
+        vec![(key1.clone(), value1.clone()), (key2.clone(), value2)],
         0, /* version */
-        3, /* expected_nodes_created */
-        0, /* expected_nodes_retired */
-        0, /* expected_blobs_retired */
     );
-    let root1 = put_account_state_set(
+    let root1 = put_value_set(
         store,
         vec![
-            (address2, value2_update.clone()),
-            (address3, value3.clone()),
+            (key2.clone(), value2_update.clone()),
+            (key3.clone(), value3.clone()),
         ],
         1, /* version */
-        3, /* expected_nodes_created */
-        2, /* expected_nodes_retired */
-        1, /* expected_blobs_retired */
     );
-    let root2 = put_account_state_set(
+    let root2 = put_value_set(
         store,
-        vec![(address3, value3_update.clone())],
+        vec![(key3.clone(), value3_update.clone())],
         2, /* version */
-        2, /* expected_nodes_created */
-        2, /* expected_nodes_retired */
-        1, /* expected_blobs_retired */
     );
 
     // Verify.
@@ -244,7 +278,7 @@ fn test_retired_records() {
             1, /* target_least_readable_version */
             0, /* limit */
         );
-        verify_value_and_proof(store, address1, Some(&value1), 0, root0);
+        verify_value_and_proof(store, key1.clone(), Some(&value1), 0, root0);
     }
     // Prune till version=1.
     {
@@ -254,13 +288,11 @@ fn test_retired_records() {
             100, /* limit */
         );
         // root0 is gone.
-        assert!(store
-            .get_value_with_proof_by_version(&StateKey::AccountAddressKey(address2), 0)
-            .is_err());
+        assert!(store.get_value_with_proof_by_version(&key2, 0).is_err());
         // root1 is still there.
-        verify_value_and_proof(store, address1, Some(&value1), 1, root1);
-        verify_value_and_proof(store, address2, Some(&value2_update), 1, root1);
-        verify_value_and_proof(store, address3, Some(&value3), 1, root1);
+        verify_value_and_proof(store, key1.clone(), Some(&value1), 1, root1);
+        verify_value_and_proof(store, key2.clone(), Some(&value2_update), 1, root1);
+        verify_value_and_proof(store, key3.clone(), Some(&value3), 1, root1);
     }
     // Prune till version=2.
     {
@@ -270,13 +302,11 @@ fn test_retired_records() {
             100, /* limit */
         );
         // root1 is gone.
-        assert!(store
-            .get_value_with_proof_by_version(&StateKey::AccountAddressKey(address2), 1)
-            .is_err());
+        assert!(store.get_value_with_proof_by_version(&key2, 1).is_err());
         // root2 is still there.
-        verify_value_and_proof(store, address1, Some(&value1), 2, root2);
-        verify_value_and_proof(store, address2, Some(&value2_update), 2, root2);
-        verify_value_and_proof(store, address3, Some(&value3_update), 2, root2);
+        verify_value_and_proof(store, key1, Some(&value1), 2, root2);
+        verify_value_and_proof(store, key2, Some(&value2_update), 2, root2);
+        verify_value_and_proof(store, key3, Some(&value3_update), 2, root2);
     }
 }
 

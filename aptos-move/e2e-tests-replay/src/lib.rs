@@ -13,15 +13,12 @@ use walkdir::WalkDir;
 use aptos_types::{
     access_path::{AccessPath, Path as AP},
     account_address::AccountAddress,
-    account_config::{
-        from_currency_code_string, reserved_vm_address, type_tag_for_currency_code,
-        DIEM_ACCOUNT_MODULE,
-    },
+    account_config::{reserved_vm_address, APTOS_ACCOUNT_MODULE},
     block_metadata::BlockMetadata,
     on_chain_config::Version,
     transaction::{
-        Script, ScriptFunction, Transaction, TransactionArgument, TransactionOutput,
-        TransactionPayload, TransactionStatus, WriteSetPayload,
+        ExecutionStatus, Script, ScriptFunction, Transaction, TransactionArgument,
+        TransactionOutput, TransactionPayload, TransactionStatus, WriteSetPayload,
     },
 };
 use aptos_vm::{
@@ -49,7 +46,7 @@ use move_core_types::{
     language_storage::{ModuleId, TypeTag},
     resolver::MoveResolver,
     value::MoveValue,
-    vm_status::{KeptVMStatus, VMStatus},
+    vm_status::VMStatus,
 };
 use move_stackless_bytecode_interpreter::{
     concrete::{
@@ -60,6 +57,7 @@ use move_stackless_bytecode_interpreter::{
     shared::bridge::{adapt_move_vm_change_set, adapt_move_vm_result},
     StacklessBytecodeInterpreter,
 };
+use move_vm_runtime::session::SerializedReturnValues;
 use move_vm_types::gas_schedule::GasStatus;
 
 const MOVE_VM_TRACING_ENV_VAR_NAME: &str = "MOVE_VM_TRACE";
@@ -158,14 +156,17 @@ fn compare_output(expect_output: &TransactionOutput, actual_output: VMResult<Ses
             let actual_status = &err.into_vm_status();
             match (expect_status, actual_status) {
                 (
-                    TransactionStatus::Keep(KeptVMStatus::MoveAbort(expect_loc, expect_code)),
+                    TransactionStatus::Keep(ExecutionStatus::MoveAbort {
+                        location: expect_loc,
+                        code: expect_code,
+                    }),
                     VMStatus::MoveAbort(actual_loc, actual_code),
                 ) => {
                     assert_eq!(expect_loc, actual_loc);
                     assert_eq!(expect_code, actual_code);
                 }
                 (
-                    TransactionStatus::Keep(KeptVMStatus::ExecutionFailure {
+                    TransactionStatus::Keep(ExecutionStatus::ExecutionFailure {
                         location: expect_loc,
                         function: expect_func,
                         code_offset: expect_offset,
@@ -369,11 +370,21 @@ impl<'env> CrossRunner<'env> {
                 Some(senders),
                 &self.stackless_vm_state,
             );
-        let stackless_vm_return_values =
-            stackless_vm_return_values.map(|rets| assert!(rets.is_empty()));
 
         // compare
-        let move_vm_return_values = adapt_move_vm_result(move_vm_return_values);
+        let move_vm_return_values = match adapt_move_vm_result(move_vm_return_values) {
+            Ok(result) => {
+                let SerializedReturnValues {
+                    return_values,
+                    mutable_reference_outputs: _,
+                } = result;
+                Ok(return_values
+                    .into_iter()
+                    .map(|(bytes, _)| bytes)
+                    .collect::<Vec<_>>())
+            }
+            Err(e) => Err(e),
+        };
         let move_vm_change_set =
             adapt_move_vm_change_set(Ok(move_vm_change_set), &self.move_vm_state).unwrap();
         assert_eq!(move_vm_return_values, stackless_vm_return_values);
@@ -399,7 +410,23 @@ fn execute_function_via_session(
     args: Vec<Vec<u8>>,
 ) -> VMResult<Vec<Vec<u8>>> {
     let mut gas_status = GasStatus::new_unmetered();
-    session.execute_function(module_id, function_name, ty_args, args, &mut gas_status)
+    let vm_result = session.execute_function_bypass_visibility(
+        module_id,
+        function_name,
+        ty_args,
+        args,
+        &mut gas_status,
+    );
+    match vm_result {
+        Ok(result) => {
+            let SerializedReturnValues {
+                return_values,
+                mutable_reference_outputs: _,
+            } = result;
+            Ok(return_values.into_iter().map(|(bytes, _)| bytes).collect())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn execute_function_via_session_and_xrunner(
@@ -423,14 +450,17 @@ fn execute_script_function_via_session(
     ty_args: Vec<TypeTag>,
     args: Vec<Vec<u8>>,
     senders: Vec<AccountAddress>,
-) -> VMResult<()> {
+) -> VMResult<SerializedReturnValues> {
     let mut gas_status = GasStatus::new_unmetered();
-    session.execute_script_function(
+    session.execute_entry_function(
         module_id,
         function_name,
         ty_args,
-        args,
-        senders,
+        senders
+            .into_iter()
+            .map(|e| e.to_vec())
+            .chain(args)
+            .collect(),
         &mut gas_status,
     )
 }
@@ -443,7 +473,7 @@ fn execute_script_function_via_session_and_xrunner(
     ty_args: Vec<TypeTag>,
     args: Vec<Vec<u8>>,
     senders: Vec<AccountAddress>,
-) -> VMResult<()> {
+) -> VMResult<SerializedReturnValues> {
     if let Some(runner) = xrunner {
         runner.step_script_function_and_compare(
             module_id,
@@ -534,12 +564,8 @@ impl<'env> TraceReplayer<'env> {
         senders: Vec<AccountAddress>,
         txn_meta: TransactionMetadata,
         script_fun: ScriptFunction,
-        gas_currency: &str,
         gas_usage: u64,
     ) -> VMResult<SessionOutput> {
-        let gas_currency_ty =
-            type_tag_for_currency_code(from_currency_code_string(gas_currency).unwrap());
-
         let move_vm = MoveVmExt::new().unwrap();
         let mut session = move_vm.new_session(&self.data_store, SessionId::txn_meta(&txn_meta));
         let mut xrunner = if self.flags.xrun {
@@ -553,12 +579,7 @@ impl<'env> TraceReplayer<'env> {
         };
 
         // prologue -> main -> epilogue
-        execute_txn_user_script_prologue(
-            &mut session,
-            xrunner.as_mut(),
-            &txn_meta,
-            &gas_currency_ty,
-        )?;
+        execute_txn_user_script_prologue(&mut session, xrunner.as_mut(), &txn_meta)?;
 
         let result = execute_script_function_via_session_and_xrunner(
             &mut session,
@@ -575,7 +596,6 @@ impl<'env> TraceReplayer<'env> {
                     &mut session,
                     xrunner.as_mut(),
                     &txn_meta,
-                    &gas_currency_ty,
                     gas_usage,
                 )?;
                 session.finish()
@@ -600,7 +620,6 @@ impl<'env> TraceReplayer<'env> {
                     &mut new_session,
                     new_xrunner.as_mut(),
                     &txn_meta,
-                    &gas_currency_ty,
                     gas_usage,
                 )?;
                 new_session.finish()
@@ -675,13 +694,12 @@ impl<'env> TraceReplayer<'env> {
         senders: Vec<AccountAddress>,
         txn_meta: TransactionMetadata,
         script_fun: ScriptFunction,
-        gas_currency: &str,
         expect_output: &TransactionOutput,
     ) {
         // ignore out-of-gas cases
         if matches!(
             expect_output.status(),
-            TransactionStatus::Keep(KeptVMStatus::OutOfGas)
+            TransactionStatus::Keep(ExecutionStatus::OutOfGas)
         ) {
             return;
         }
@@ -694,7 +712,6 @@ impl<'env> TraceReplayer<'env> {
                 senders,
                 txn_meta,
                 script_fun,
-                gas_currency,
                 expect_output.gas_used(),
             )
         };
@@ -708,7 +725,6 @@ fn execute_txn_user_script_prologue(
     session: &mut SessionExt<impl MoveResolver>,
     xrunner: Option<&mut CrossRunner>,
     txn_meta: &TransactionMetadata,
-    gas_currency_ty: &TypeTag,
 ) -> VMResult<()> {
     let TransactionMetadata {
         sender,
@@ -738,9 +754,9 @@ fn execute_txn_user_script_prologue(
     let rets = execute_function_via_session_and_xrunner(
         session,
         xrunner,
-        &*DIEM_ACCOUNT_MODULE,
+        &*APTOS_ACCOUNT_MODULE,
         &*SCRIPT_PROLOGUE_NAME,
-        vec![gas_currency_ty.clone()],
+        vec![],
         args,
     )?;
     assert!(rets.is_empty());
@@ -751,7 +767,6 @@ fn execute_txn_user_script_epilogue(
     session: &mut SessionExt<impl MoveResolver>,
     xrunner: Option<&mut CrossRunner>,
     txn_meta: &TransactionMetadata,
-    gas_currency_ty: &TypeTag,
     gas_usage: u64,
 ) -> VMResult<()> {
     let TransactionMetadata {
@@ -776,9 +791,9 @@ fn execute_txn_user_script_epilogue(
     let rets = execute_function_via_session_and_xrunner(
         session,
         xrunner,
-        &*DIEM_ACCOUNT_MODULE,
+        &*APTOS_ACCOUNT_MODULE,
         &*USER_EPILOGUE_NAME,
-        vec![gas_currency_ty.clone()],
+        vec![],
         args,
     )?;
     assert!(rets.is_empty());
@@ -812,7 +827,7 @@ fn execute_txn_admin_script_prologue(
     let rets = execute_function_via_session_and_xrunner(
         session,
         xrunner,
-        &*DIEM_ACCOUNT_MODULE,
+        &*APTOS_ACCOUNT_MODULE,
         &*WRITESET_PROLOGUE_NAME,
         vec![],
         args,
@@ -843,7 +858,7 @@ fn execute_txn_admin_script_epilogue(
     let rets = execute_function_via_session_and_xrunner(
         session,
         xrunner,
-        &*DIEM_ACCOUNT_MODULE,
+        &*APTOS_ACCOUNT_MODULE,
         &*WRITESET_EPILOGUE_NAME,
         vec![],
         args,
@@ -932,7 +947,7 @@ fn replay_trace<P: AsRef<Path>>(
                 Transaction::GenesisTransaction(_) => {
                     if !matches!(
                         res.status(),
-                        TransactionStatus::Keep(KeptVMStatus::Executed)
+                        TransactionStatus::Keep(ExecutionStatus::Success)
                     ) {
                         if flags.warning {
                             eprintln!(
@@ -946,7 +961,7 @@ fn replay_trace<P: AsRef<Path>>(
                 Transaction::BlockMetadata(block_metadata) => {
                     if !matches!(
                         res.status(),
-                        TransactionStatus::Keep(KeptVMStatus::Executed)
+                        TransactionStatus::Keep(ExecutionStatus::Success)
                     ) {
                         if flags.warning {
                             eprintln!(
@@ -1042,12 +1057,7 @@ fn replay_trace<P: AsRef<Path>>(
                         }
                         let txn_meta = TransactionMetadata::new(&signed_txn);
                         replayer.replay_txn_script_function(
-                            is_admin,
-                            senders,
-                            txn_meta,
-                            script_fun,
-                            signed_txn.gas_currency_code(),
-                            &res,
+                            is_admin, senders, txn_meta, script_fun, &res,
                         );
                         replayer.data_store.add_write_set(res.write_set());
                     }

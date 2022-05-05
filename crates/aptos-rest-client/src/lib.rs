@@ -2,33 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{anyhow, Result};
-pub use aptos_api_types::{MoveModuleBytecode, PendingTransaction, Transaction};
+pub use aptos_api_types::{self, MoveModuleBytecode, PendingTransaction, Transaction};
 use aptos_crypto::HashValue;
-use aptos_types::{account_address::AccountAddress, transaction::SignedTransaction};
-use move_core_types::{
-    ident_str,
-    identifier::Identifier,
-    language_storage::{StructTag, CORE_CODE_ADDRESS},
+use aptos_types::{
+    account_address::AccountAddress, account_config::aptos_root_address,
+    transaction::SignedTransaction,
 };
 use reqwest::{header::CONTENT_TYPE, Client as ReqwestClient, StatusCode};
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, Value};
+use state::State;
 use std::time::Duration;
 use url::Url;
-
-pub use aptos_api_types;
-use aptos_types::account_config::aptos_root_address;
-
 pub mod error;
 pub mod faucet;
 pub use faucet::FaucetClient;
 pub mod response;
 pub use response::Response;
 mod state;
-use state::State;
 pub mod types;
 use crate::aptos::{AptosVersion, Balance};
 pub use types::{Account, Resource, RestError};
-
 pub mod aptos;
 
 const BCS_CONTENT_TYPE: &str = "application/x.diem.signed_transaction+bcs";
@@ -53,32 +47,15 @@ impl Client {
     }
 
     pub async fn get_aptos_version(&self) -> Result<Response<AptosVersion>> {
-        self.get_resource::<AptosVersion>(
-            aptos_root_address(),
-            &StructTag {
-                address: CORE_CODE_ADDRESS,
-                name: ident_str!("Version").to_owned(),
-                module: ident_str!("Version").to_owned(),
-                type_params: vec![],
-            },
-        )
-        .await
+        self.get_resource::<AptosVersion>(aptos_root_address(), "0x1::Version::Version")
+            .await
     }
 
     pub async fn get_account_balance(&self, address: AccountAddress) -> Result<Response<Balance>> {
         let resp = self
-            .get_account_resources_by_type(
-                address,
-                aptos_types::account_config::CORE_CODE_ADDRESS,
-                &ident_str!("TestCoin").to_owned(),
-                &ident_str!("Balance").to_owned(),
-            )
+            .get_account_resource(address, "0x1::TestCoin::Balance")
             .await?;
-        resp.and_then(|mut resources| {
-            let resource = resources.pop();
-            if !resources.is_empty() {
-                return Err(anyhow!("More than one data returned"));
-            }
+        resp.and_then(|resource| {
             if let Some(res) = resource {
                 Ok(serde_json::from_value::<Balance>(res.data)?)
             } else {
@@ -172,6 +149,7 @@ impl Client {
             if resp.status() != StatusCode::NOT_FOUND {
                 let txn_resp: Response<Transaction> = self.json(resp).await?;
                 let (transaction, state) = txn_resp.into_parts();
+
                 if !transaction.is_pending() {
                     if !transaction.success() {
                         return Err(anyhow!(
@@ -289,36 +267,15 @@ impl Client {
         self.json(response).await
     }
 
-    pub async fn get_account_resources_by_type(
-        &self,
-        address: AccountAddress,
-        module_address: AccountAddress,
-        module_id: &Identifier,
-        struct_name: &Identifier,
-    ) -> Result<Response<Vec<Resource>>> {
-        self.get_account_resources(address).await.map(|resp| {
-            resp.map(|resources| {
-                resources
-                    .into_iter()
-                    .filter(|res| {
-                        res.resource_type.address == module_address
-                            && (&res.resource_type.module) == module_id
-                            && (&res.resource_type.name) == struct_name
-                    })
-                    .collect()
-            })
-        })
-    }
-
     pub async fn get_resource<T: DeserializeOwned>(
         &self,
         address: AccountAddress,
-        resource_type: &StructTag,
+        resource_type: &str,
     ) -> Result<Response<T>> {
         let resp = self.get_account_resource(address, resource_type).await?;
         resp.and_then(|conf| {
-            if let Some(val) = conf {
-                serde_json::from_value(val)
+            if let Some(res) = conf {
+                serde_json::from_value(res.data)
                     .map_err(|e| anyhow!("deserialize {} failed: {}", resource_type, e))
             } else {
                 Err(anyhow!(
@@ -333,16 +290,14 @@ impl Client {
     pub async fn get_account_resource(
         &self,
         address: AccountAddress,
-        resource_type: &StructTag,
-    ) -> Result<Response<Option<serde_json::Value>>> {
-        self.get_account_resources(address).await.map(|response| {
-            response.map(|resources| {
-                resources
-                    .into_iter()
-                    .find(|resource| &resource.resource_type == resource_type)
-                    .map(|resource| resource.data)
-            })
-        })
+        resource_type: &str,
+    ) -> Result<Response<Option<Resource>>> {
+        let url = self
+            .base_url
+            .join(&format!("accounts/{}/resource/{}", address, resource_type))?;
+
+        let response = self.inner.get(url).send().await?;
+        self.json(response).await
     }
 
     pub async fn get_account_modules(
@@ -354,7 +309,26 @@ impl Client {
             .join(&format!("accounts/{}/modules", address))?;
 
         let response = self.inner.get(url).send().await?;
+        self.json(response).await
+    }
 
+    pub async fn get_table_item<K: Serialize>(
+        &self,
+        table_handle: u128,
+        key_type: &str,
+        value_type: &str,
+        key: K,
+    ) -> Result<Response<Value>> {
+        let url = self
+            .base_url
+            .join(&format!("tables/{}/item", table_handle))?;
+        let data = json!({
+            "key_type": key_type,
+            "value_type": value_type,
+            "key": json!(key),
+        });
+
+        let response = self.inner.post(url).json(&data).send().await?;
         self.json(response).await
     }
 
@@ -372,7 +346,6 @@ impl Client {
             let error_response = response.json::<RestError>().await?;
             return Err(anyhow::anyhow!("Request failed: {:?}", error_response));
         }
-
         let state = State::from_headers(response.headers())?;
 
         Ok((response, state))

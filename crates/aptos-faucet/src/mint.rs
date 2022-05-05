@@ -65,7 +65,7 @@ impl std::fmt::Display for Response {
 #[derive(Deserialize, Debug)]
 pub struct MintParams {
     pub amount: u64,
-    pub auth_key: Option<AccountAddress>,
+    pub auth_key: Option<String>,
     pub address: Option<String>,
     pub pub_key: Option<Ed25519PublicKey>,
     pub return_txns: Option<bool>,
@@ -79,8 +79,14 @@ impl std::fmt::Display for MintParams {
 
 impl MintParams {
     fn receiver(&self) -> Option<AccountAddress> {
-        if let Some(auth_key) = self.auth_key {
-            return Some(auth_key);
+        if let Some(auth_key) = self.auth_key.as_ref() {
+            return match AccountAddress::from_hex_literal(auth_key) {
+                Ok(auth_key) => Some(auth_key),
+                Err(_) => match AccountAddress::from_hex(auth_key) {
+                    Ok(auth_key) => Some(auth_key),
+                    Err(_) => None,
+                },
+            };
         }
         if let Some(address) = self.address.as_ref() {
             return match AccountAddress::from_hex_literal(address) {
@@ -152,9 +158,12 @@ pub async fn process(service: &Service, params: MintParams) -> Result<Response> 
         let mut faucet_account = service.faucet_account.lock().unwrap();
 
         if receiver_seq.is_none() {
-            let builder = service.transaction_factory.payload(
-                aptos_stdlib::encode_create_account_script_function(receiver_address),
-            );
+            let builder =
+                service
+                    .transaction_factory
+                    .payload(aptos_stdlib::encode_account_create_account(
+                        receiver_address,
+                    ));
 
             let txn = faucet_account.sign_with_transaction_builder(builder);
             txns.push(txn)
@@ -163,7 +172,7 @@ pub async fn process(service: &Service, params: MintParams) -> Result<Response> 
         if amount != 0 {
             txns.push(
                 faucet_account.sign_with_transaction_builder(service.transaction_factory.payload(
-                    aptos_stdlib::encode_mint_script_function(receiver_address, amount),
+                    aptos_stdlib::encode_test_coin_mint(receiver_address, amount),
                 )),
             );
         }

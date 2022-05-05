@@ -7,10 +7,10 @@ use aptos_crypto::{
     HashValue,
 };
 use aptos_crypto_derive::CryptoHasher;
-use move_core_types::account_address::AccountAddress;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Serialize};
+use std::convert::TryInto;
 use thiserror::Error;
 
 #[derive(
@@ -18,18 +18,22 @@ use thiserror::Error;
 )]
 #[cfg_attr(any(test, feature = "fuzzing"), derive(proptest_derive::Arbitrary))]
 pub enum StateKey {
-    AccountAddressKey(AccountAddress),
     AccessPath(AccessPath),
+    TableItem {
+        handle: u128,
+        #[serde(with = "serde_bytes")]
+        key: Vec<u8>,
+    },
     // Only used for testing
     #[serde(with = "serde_bytes")]
     Raw(Vec<u8>),
 }
 
 #[repr(u8)]
-#[derive(FromPrimitive, ToPrimitive)]
-enum StateKeyPrefix {
-    AccountAddress,
+#[derive(Clone, Debug, FromPrimitive, ToPrimitive)]
+pub enum StateKeyTag {
     AccessPath,
+    TableItem,
     Raw = 255,
 }
 
@@ -39,14 +43,15 @@ impl StateKey {
         let mut out = vec![];
 
         let (prefix, raw_key) = match self {
-            StateKey::AccountAddressKey(account_address) => (
-                StateKeyPrefix::AccountAddress,
-                bcs::to_bytes(account_address)?,
-            ),
             StateKey::AccessPath(access_path) => {
-                (StateKeyPrefix::AccessPath, bcs::to_bytes(access_path)?)
+                (StateKeyTag::AccessPath, bcs::to_bytes(access_path)?)
             }
-            StateKey::Raw(raw_bytes) => (StateKeyPrefix::Raw, raw_bytes.to_vec()),
+            StateKey::TableItem { handle, key } => {
+                let mut bytes = handle.to_be_bytes().to_vec();
+                bytes.extend(key);
+                (StateKeyTag::TableItem, bytes)
+            }
+            StateKey::Raw(raw_bytes) => (StateKeyTag::Raw, raw_bytes.to_vec()),
         };
         out.push(prefix as u8);
         out.extend(raw_key);
@@ -59,15 +64,26 @@ impl StateKey {
             return Err(StateKeyDecodeErr::EmptyInput.into());
         }
         let tag = val[0];
-        let state_key_tag = StateKeyPrefix::from_u8(tag)
-            .ok_or(StateKeyDecodeErr::UnknownTag { unknown_tag: tag })?;
+        let state_key_tag =
+            StateKeyTag::from_u8(tag).ok_or(StateKeyDecodeErr::UnknownTag { unknown_tag: tag })?;
         match state_key_tag {
-            StateKeyPrefix::AccountAddress => {
-                Ok(StateKey::AccountAddressKey(bcs::from_bytes(&val[1..])?))
+            StateKeyTag::AccessPath => Ok(StateKey::AccessPath(bcs::from_bytes(&val[1..])?)),
+            StateKeyTag::TableItem => {
+                const HANDLE_SIZE: usize = std::mem::size_of::<u128>();
+                let handle = u128::from_be_bytes(
+                    val[1..1 + HANDLE_SIZE]
+                        .try_into()
+                        .expect("Bytes too short."),
+                );
+                let key = val[1 + HANDLE_SIZE..].to_vec();
+                Ok(StateKey::table_item(handle, key))
             }
-            StateKeyPrefix::AccessPath => Ok(StateKey::AccessPath(bcs::from_bytes(&val[1..])?)),
-            StateKeyPrefix::Raw => Ok(StateKey::Raw(val[1..].to_vec())),
+            StateKeyTag::Raw => Ok(StateKey::Raw(val[1..].to_vec())),
         }
+    }
+
+    pub fn table_item(handle: u128, key: Vec<u8>) -> Self {
+        StateKey::TableItem { handle, key }
     }
 }
 

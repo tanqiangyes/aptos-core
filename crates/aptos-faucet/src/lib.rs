@@ -33,7 +33,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use url::Url;
-use warp::{Filter, Rejection, Reply};
+use warp::{http, Filter, Rejection, Reply};
 
 pub mod mint;
 
@@ -90,7 +90,12 @@ pub fn routes(
                 info.elapsed(),
             )
         }))
-        .with(warp::cors().allow_any_origin().allow_methods(vec!["POST"]))
+        .with(
+            warp::cors()
+                .allow_any_origin()
+                .allow_headers(vec![http::header::CONTENT_TYPE])
+                .allow_methods(vec!["POST"]),
+        )
 }
 
 fn health_route(
@@ -183,7 +188,7 @@ pub async fn delegate_mint_account(
             .client
             .submit_and_wait(&faucet_account.sign_with_transaction_builder(
                 service.transaction_factory.payload(
-                    aptos_stdlib::encode_delegate_mint_capability_script_function(
+                    aptos_stdlib::encode_test_coin_delegate_mint_capability(
                         delegated_account.address(),
                     ),
                 ),
@@ -199,7 +204,7 @@ pub async fn delegate_mint_account(
             &delegated_account.sign_with_transaction_builder(
                 service
                     .transaction_factory
-                    .payload(aptos_stdlib::encode_claim_mint_capability_script_function()),
+                    .payload(aptos_stdlib::encode_test_coin_claim_mint_capability()),
             ),
         )
         .await

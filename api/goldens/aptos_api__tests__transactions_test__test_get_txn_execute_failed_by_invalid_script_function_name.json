@@ -1,18 +1,45 @@
 {
   "type": "user_transaction",
   "version": "2",
-  "hash": "0xfb4cb05816a067c3dc02df8b628a2924c030937599565fb317de48736cd98b4d",
-  "state_root_hash": "0x35704a7851c5e2da0ef26eae6d11826060066f9c09365ba1cd3a037ee9c5fb7b",
+  "hash": "0xc00c694596b002f38c4a5eb5b8b20a772cb2bc7e5aacd3b2637e73bec802796e",
+  "state_root_hash": "0x55a1d03a8eafc125b1a3a320ebfac3ba83f902aaf946e0ad1e958620e116630f",
   "event_root_hash": "0x414343554d554c41544f525f504c414345484f4c4445525f4841534800000000",
   "gas_used": "1",
   "success": false,
-  "vm_status": "Move bytecode deserialization / verification failed, including script function not found or invalid arguments",
-  "accumulator_root_hash": "0xb46de4961ff46248e9a23865bf81f7a9d86cb81f22e55725dd5622d5cc0c1444",
+  "vm_status": "Transaction Executed and Committed with Error FUNCTION_RESOLUTION_FAILURE",
+  "accumulator_root_hash": "0x54729cc3076fee556b5eb6fa831c5fcde05edca02ad407f7591c04bddd3f1f07",
+  "changes": [
+    {
+      "type": "write_resource",
+      "address": "0xa550c18",
+      "state_key_hash": "0xa85a3f04345fb96b11d0e4f8b85a04475452f309d6305d8a4de891bd22392995",
+      "data": {
+        "type": "0x1::Account::Account",
+        "data": {
+          "authentication_key": "0x7deeccb1080854f499ec8b4c1b213b82c5e34b925cf6875fec02d4b77adbd2d6",
+          "self_address": "0xa550c18",
+          "sequence_number": "1"
+        }
+      }
+    },
+    {
+      "type": "write_resource",
+      "address": "0xa550c18",
+      "state_key_hash": "0x6b3ef01fe5ffd2a5a4bc8921a900ff6281fce77cda659e1b89c93a08e7a6507f",
+      "data": {
+        "type": "0x1::TestCoin::Balance",
+        "data": {
+          "coin": {
+            "value": "18446744073709551614"
+          }
+        }
+      }
+    }
+  ],
   "sender": "0xa550c18",
   "sequence_number": "0",
   "max_gas_amount": "2000",
   "gas_unit_price": "0",
-  "gas_currency_code": "XUS",
   "expiration_timestamp_secs": "18446744073709551615",
   "payload": {
     "type": "script_function_payload",
@@ -26,7 +53,7 @@
   "signature": {
     "type": "ed25519_signature",
     "public_key": "0xb9c6ee1630ef3e711144a648db06bbb2284f7274cfbee53ffcee503cc1a49200",
-    "signature": "0x446060cb7b869883cb022bf6ea5e78a3c9bd454410f12904fd17c2f6041019cabdd1c6149b3974a389c49e9e416c994c1ccc6b7cc15be3a2ef3440e353ddad0d"
+    "signature": "0x892be42783ef9c1b512e10ec1e9b0a38c820999d286607af02bf4b9e2ffeb6d536e9ba0f0fc5823b7635d7ccac987186f15c438a10a58a11319435c06c38200a"
   },
   "events": [],
   "timestamp": "1"

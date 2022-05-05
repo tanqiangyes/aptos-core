@@ -7,6 +7,7 @@ use crate::{
     driver_client::{ClientNotificationListener, DriverNotification},
     error::Error,
     logging::{LogEntry, LogSchema},
+    metrics,
     notification_handlers::{
         CommitNotification, CommitNotificationListener, CommittedAccounts, CommittedTransactions,
         ConsensusNotificationHandler, ErrorNotification, ErrorNotificationListener,
@@ -15,15 +16,15 @@ use crate::{
     storage_synchronizer::StorageSynchronizerInterface,
     utils,
 };
-use ::aptos_logger::*;
 use aptos_config::config::{RoleType, StateSyncDriverConfig};
 use aptos_data_client::AptosDataClient;
 use aptos_infallible::Mutex;
+use aptos_logger::prelude::*;
 use aptos_types::waypoint::Waypoint;
 use consensus_notifications::{
     ConsensusCommitNotification, ConsensusNotification, ConsensusSyncNotification,
 };
-use data_streaming_service::streaming_client::{NotificationFeedback, StreamingServiceClient};
+use data_streaming_service::streaming_client::{DataStreamingClient, NotificationFeedback};
 use event_notifications::EventSubscriptionService;
 use futures::StreamExt;
 use mempool_notifications::MempoolNotificationSender;
@@ -31,6 +32,9 @@ use std::{sync::Arc, time::SystemTime};
 use storage_interface::DbReader;
 use tokio::time::{interval, Duration};
 use tokio_stream::wrappers::IntervalStream;
+
+// Useful constants for the driver
+const DRIVER_ERROR_LOG_FREQ_SECS: u64 = 1;
 
 /// The configuration of the state sync driver
 #[derive(Clone)]
@@ -56,9 +60,9 @@ impl DriverConfiguration {
 }
 
 /// The state sync driver that drives synchronization progress
-pub struct StateSyncDriver<DataClient, MempoolNotifier, StorageSyncer> {
+pub struct StateSyncDriver<DataClient, MempoolNotifier, StorageSyncer, StreamingClient> {
     // The component that manages the initial bootstrapping of the node
-    bootstrapper: Bootstrapper<StorageSyncer>,
+    bootstrapper: Bootstrapper<StorageSyncer, StreamingClient>,
 
     // The listener for client notifications
     client_notification_listener: ClientNotificationListener,
@@ -70,7 +74,7 @@ pub struct StateSyncDriver<DataClient, MempoolNotifier, StorageSyncer> {
     consensus_notification_handler: ConsensusNotificationHandler,
 
     // The component that manages the continuous syncing of the node
-    continuous_syncer: ContinuousSyncer<StorageSyncer>,
+    continuous_syncer: ContinuousSyncer<StorageSyncer, StreamingClient>,
 
     // The client for checking the global data summary of our peers
     aptos_data_client: DataClient,
@@ -98,7 +102,8 @@ impl<
         DataClient: AptosDataClient + Send + Clone + 'static,
         MempoolNotifier: MempoolNotificationSender,
         StorageSyncer: StorageSynchronizerInterface + Clone,
-    > StateSyncDriver<DataClient, MempoolNotifier, StorageSyncer>
+        StreamingClient: DataStreamingClient + Clone,
+    > StateSyncDriver<DataClient, MempoolNotifier, StorageSyncer, StreamingClient>
 {
     pub fn new(
         client_notification_listener: ClientNotificationListener,
@@ -106,23 +111,22 @@ impl<
         consensus_notification_handler: ConsensusNotificationHandler,
         driver_configuration: DriverConfiguration,
         error_notification_listener: ErrorNotificationListener,
-        event_subscription_service: EventSubscriptionService,
+        event_subscription_service: Arc<Mutex<EventSubscriptionService>>,
         mempool_notification_handler: MempoolNotificationHandler<MempoolNotifier>,
         storage_synchronizer: StorageSyncer,
         aptos_data_client: DataClient,
-        streaming_service_client: StreamingServiceClient,
+        streaming_client: StreamingClient,
         storage: Arc<dyn DbReader>,
     ) -> Self {
-        let event_subscription_service = Arc::new(Mutex::new(event_subscription_service));
         let bootstrapper = Bootstrapper::new(
             driver_configuration.clone(),
-            streaming_service_client.clone(),
+            streaming_client.clone(),
             storage.clone(),
             storage_synchronizer.clone(),
         );
         let continuous_syncer = ContinuousSyncer::new(
             driver_configuration.clone(),
-            streaming_service_client,
+            streaming_client,
             storage.clone(),
             storage_synchronizer,
         );
@@ -239,29 +243,29 @@ impl<
         &mut self,
         consensus_commit_notification: ConsensusCommitNotification,
     ) -> Result<(), Error> {
-        debug!(
+        info!(
             LogSchema::new(LogEntry::ConsensusNotification).message(&format!(
                 "Received a consensus commit notification! Total transactions: {:?}, events: {:?}",
                 consensus_commit_notification.transactions.len(),
                 consensus_commit_notification.reconfiguration_events.len()
             ))
         );
+        self.update_consensus_commit_metrics(&consensus_commit_notification);
 
         // TODO(joshlind): can we get consensus to forward the events?
 
         // Handle the commit notification
-        let latest_synced_version = utils::fetch_latest_synced_version(self.storage.clone())?;
-        let latest_synced_ledger_info =
-            utils::fetch_latest_synced_ledger_info(self.storage.clone())?;
-        CommitNotification::handle_transaction_notification(
-            consensus_commit_notification.reconfiguration_events.clone(),
-            consensus_commit_notification.transactions.clone(),
-            latest_synced_version,
-            latest_synced_ledger_info,
+        let committed_transactions = CommittedTransactions {
+            events: consensus_commit_notification.reconfiguration_events.clone(),
+            transactions: consensus_commit_notification.transactions.clone(),
+        };
+        utils::handle_committed_transactions(
+            committed_transactions,
+            self.storage.clone(),
             self.mempool_notification_handler.clone(),
             self.event_subscription_service.clone(),
         )
-        .await?;
+        .await;
 
         // Respond to consensus successfully
         self.consensus_notification_handler
@@ -273,17 +277,45 @@ impl<
         self.check_sync_request_progress().await
     }
 
+    /// Updates the storage synchronizer metrics based on the consensus
+    /// commit notification.
+    fn update_consensus_commit_metrics(
+        &self,
+        consensus_commit_notification: &ConsensusCommitNotification,
+    ) {
+        metrics::increment_counter(
+            &metrics::DRIVER_COUNTERS,
+            metrics::DRIVER_CONSENSUS_COMMIT_NOTIFICATION,
+        );
+
+        let operations = [
+            metrics::StorageSynchronizerOperations::ExecutedTransactions,
+            metrics::StorageSynchronizerOperations::Synced,
+        ];
+        for operation in operations {
+            metrics::increment_gauge(
+                &metrics::STORAGE_SYNCHRONIZER_OPERATIONS,
+                operation.get_label(),
+                consensus_commit_notification.transactions.len() as u64,
+            );
+        }
+    }
+
     /// Handles a consensus notification to sync to a specified target
     async fn handle_consensus_sync_notification(
         &mut self,
         sync_notification: ConsensusSyncNotification,
     ) -> Result<(), Error> {
         let latest_synced_version = utils::fetch_latest_synced_version(self.storage.clone())?;
-        debug!(
+        info!(
             LogSchema::new(LogEntry::ConsensusNotification).message(&format!(
             "Received a consensus sync notification! Target version: {:?}. Latest synced version: {:?}",
             sync_notification.target, latest_synced_version,
             ))
+        );
+        metrics::increment_counter(
+            &metrics::DRIVER_COUNTERS,
+            metrics::DRIVER_CONSENSUS_SYNC_NOTIFICATION,
         );
 
         // Initialize a new sync request
@@ -298,6 +330,10 @@ impl<
     fn handle_client_notification(&mut self, notification: DriverNotification) {
         debug!(LogSchema::new(LogEntry::ClientNotification)
             .message("Received a notify bootstrap notification from the client!"));
+        metrics::increment_counter(
+            &metrics::DRIVER_COUNTERS,
+            metrics::DRIVER_CLIENT_NOTIFICATION,
+        );
 
         // TODO(joshlind): refactor this if the client only supports one notification type!
         // Extract the bootstrap notifier channel
@@ -314,87 +350,19 @@ impl<
         }
     }
 
-    /// Handles a commit notification sent by the storage synchronizer
+    /// Handles a commit notification sent by the storage synchronizer for new
+    /// accounts.
     async fn handle_commit_notification(&mut self, commit_notification: CommitNotification) {
-        match commit_notification {
-            CommitNotification::CommittedAccounts(committed_accounts) => {
-                debug!(
-                    LogSchema::new(LogEntry::SynchronizerNotification).message(&format!(
-                        "Received an account commit notification from the storage synchronizer. \
+        let CommitNotification::CommittedAccounts(committed_accounts) = commit_notification;
+        debug!(
+            LogSchema::new(LogEntry::SynchronizerNotification).message(&format!(
+                "Received an account commit notification from the storage synchronizer. \
                         All synced: {:?}, last committed index: {:?}.",
-                        committed_accounts.all_accounts_synced,
-                        committed_accounts.last_committed_account_index,
-                    ))
-                );
-                self.handle_committed_accounts(committed_accounts).await;
-            }
-            CommitNotification::CommittedTransactions(committed_transactions) => {
-                debug!(
-                    LogSchema::new(LogEntry::SynchronizerNotification).message(&format!(
-                        "Received a transaction commit notification from the storage synchronizer! \
-                        Transaction total: {:?}, event total: {:?}",
-                       committed_transactions.transactions.len(),
-                       committed_transactions.events.len()
-                    ))
-                );
-                self.handle_committed_transactions(committed_transactions)
-                    .await;
-            }
-        }
-    }
-
-    /// Handles a notification sent by the storage synchronizer for committed transactions
-    async fn handle_committed_transactions(
-        &mut self,
-        committed_transactions: CommittedTransactions,
-    ) {
-        // Fetch the latest synced version and ledger info from storage
-        let (latest_synced_version, latest_synced_ledger_info) =
-            match utils::fetch_latest_synced_version(self.storage.clone()) {
-                Ok(latest_synced_version) => {
-                    match utils::fetch_latest_synced_ledger_info(self.storage.clone()) {
-                        Ok(latest_synced_ledger_info) => {
-                            (latest_synced_version, latest_synced_ledger_info)
-                        }
-                        Err(error) => {
-                            error!(LogSchema::new(LogEntry::SynchronizerNotification)
-                                .error(&error)
-                                .message("Failed to fetch latest synced ledger info!"));
-                            return;
-                        }
-                    }
-                }
-                Err(error) => {
-                    error!(LogSchema::new(LogEntry::SynchronizerNotification)
-                        .error(&error)
-                        .message("Failed to fetch latest synced version!"));
-                    return;
-                }
-            };
-
-        // Handle the commit notification
-        if let Err(error) = CommitNotification::handle_transaction_notification(
-            committed_transactions.events,
-            committed_transactions.transactions,
-            latest_synced_version,
-            latest_synced_ledger_info,
-            self.mempool_notification_handler.clone(),
-            self.event_subscription_service.clone(),
-        )
-        .await
-        {
-            error!(LogSchema::new(LogEntry::SynchronizerNotification)
-                .error(&error)
-                .message("Failed to handle a transaction commit notification!"));
-        }
-
-        // Update the last commit timestamp for the sync request
-        let consensus_sync_request = self
-            .consensus_notification_handler
-            .get_consensus_sync_request();
-        if let Some(sync_request) = consensus_sync_request.lock().as_mut() {
-            sync_request.update_last_commit_timestamp()
-        };
+                committed_accounts.all_accounts_synced,
+                committed_accounts.last_committed_account_index,
+            ))
+        );
+        self.handle_committed_accounts(committed_accounts).await;
     }
 
     /// Handles a notification sent by the storage synchronizer for committed accounts
@@ -418,8 +386,13 @@ impl<
                 .expect("Committed transaction should exist for last committed account chunk!");
 
             // Handle the commit notification
-            self.handle_committed_transactions(committed_transactions)
-                .await;
+            utils::handle_committed_transactions(
+                committed_transactions,
+                self.storage.clone(),
+                self.mempool_notification_handler.clone(),
+                self.event_subscription_service.clone(),
+            )
+            .await;
         }
     }
 
@@ -554,14 +527,22 @@ impl<
                 .drive_progress(consensus_sync_request)
                 .await
             {
-                error!(LogSchema::new(LogEntry::Driver)
-                    .error(&error)
-                    .message("Error found when driving progress of the continuous syncer!"));
+                sample!(
+                    SampleRate::Duration(Duration::from_secs(DRIVER_ERROR_LOG_FREQ_SECS)),
+                    error!(LogSchema::new(LogEntry::Driver)
+                        .error(&error)
+                        .message("Error found when driving progress of the continuous syncer!"));
+                );
+                metrics::increment_counter(&metrics::CONTINUOUS_SYNCER_ERRORS, error.get_label());
             }
         } else if let Err(error) = self.bootstrapper.drive_progress(&global_data_summary).await {
-            error!(LogSchema::new(LogEntry::Driver)
-                .error(&error)
-                .message("Error found when checking the bootstrapper progress!"));
+            sample!(
+                    SampleRate::Duration(Duration::from_secs(DRIVER_ERROR_LOG_FREQ_SECS)),
+                    error!(LogSchema::new(LogEntry::Driver)
+                        .error(&error)
+                        .message("Error found when checking the bootstrapper progress!"));
+            );
+            metrics::increment_counter(&metrics::BOOTSTRAPPER_ERRORS, error.get_label());
         };
     }
 }

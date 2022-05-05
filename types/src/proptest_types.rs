@@ -4,10 +4,8 @@
 use crate::{
     access_path::AccessPath,
     account_address::{self, AccountAddress},
-    account_config::{
-        AccountResource, BalanceResource, DiemAccountResource, KeyRotationCapabilityResource,
-        WithdrawCapabilityResource,
-    },
+    account_config::{AccountResource, BalanceResource},
+    account_state::AccountState,
     account_state_blob::AccountStateBlob,
     block_info::{BlockInfo, Round},
     block_metadata::BlockMetadata,
@@ -20,14 +18,14 @@ use crate::{
     proof::TransactionInfoListWithProof,
     state_store::{state_key::StateKey, state_value::StateValue},
     transaction::{
-        ChangeSet, Module, ModuleBundle, RawTransaction, Script, SignatureCheckedTransaction,
-        SignedTransaction, Transaction, TransactionArgument, TransactionInfo,
-        TransactionListWithProof, TransactionPayload, TransactionStatus, TransactionToCommit,
-        Version, WriteSetPayload,
+        ChangeSet, ExecutionStatus, Module, ModuleBundle, RawTransaction, Script,
+        SignatureCheckedTransaction, SignedTransaction, Transaction, TransactionArgument,
+        TransactionInfo, TransactionListWithProof, TransactionPayload, TransactionStatus,
+        TransactionToCommit, Version, WriteSetPayload,
     },
     validator_info::ValidatorInfo,
     validator_signer::ValidatorSigner,
-    vm_status::{KeptVMStatus, VMStatus},
+    vm_status::VMStatus,
     write_set::{WriteOp, WriteSet, WriteSetMut},
 };
 use aptos_crypto::{
@@ -46,7 +44,7 @@ use proptest::{
 use proptest_derive::Arbitrary;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     convert::{TryFrom, TryInto},
     iter::Iterator,
 };
@@ -275,7 +273,6 @@ pub struct RawTransactionGen {
     payload: TransactionPayload,
     max_gas_amount: u64,
     gas_unit_price: u64,
-    gas_currency_code: String,
     expiration_time_secs: u64,
 }
 
@@ -296,7 +293,6 @@ impl RawTransactionGen {
             self.payload,
             self.max_gas_amount,
             self.gas_unit_price,
-            self.gas_currency_code,
             self.expiration_time_secs,
         )
     }
@@ -306,7 +302,6 @@ impl RawTransaction {
     fn strategy_impl(
         address_strategy: impl Strategy<Value = AccountAddress>,
         payload_strategy: impl Strategy<Value = TransactionPayload>,
-        gas_currency_code_strategy: impl Strategy<Value = String>,
     ) -> impl Strategy<Value = Self> {
         // XXX what other constraints do these need to obey?
         (
@@ -315,7 +310,6 @@ impl RawTransaction {
             payload_strategy,
             any::<u64>(),
             any::<u64>(),
-            gas_currency_code_strategy,
             any::<u64>(),
         )
             .prop_map(
@@ -325,7 +319,6 @@ impl RawTransaction {
                     payload,
                     max_gas_amount,
                     gas_unit_price,
-                    gas_currency_code,
                     expiration_time_secs,
                 )| {
                     new_raw_transaction(
@@ -334,7 +327,6 @@ impl RawTransaction {
                         payload,
                         max_gas_amount,
                         gas_unit_price,
-                        gas_currency_code,
                         expiration_time_secs,
                     )
                 },
@@ -348,7 +340,6 @@ fn new_raw_transaction(
     payload: TransactionPayload,
     max_gas_amount: u64,
     gas_unit_price: u64,
-    gas_currency_code: String,
     expiration_time_secs: u64,
 ) -> RawTransaction {
     let chain_id = ChainId::test();
@@ -359,7 +350,6 @@ fn new_raw_transaction(
             module,
             max_gas_amount,
             gas_unit_price,
-            gas_currency_code,
             expiration_time_secs,
             chain_id,
         ),
@@ -369,7 +359,6 @@ fn new_raw_transaction(
             script,
             max_gas_amount,
             gas_unit_price,
-            gas_currency_code,
             expiration_time_secs,
             chain_id,
         ),
@@ -379,7 +368,6 @@ fn new_raw_transaction(
             script_fn,
             max_gas_amount,
             gas_unit_price,
-            gas_currency_code,
             expiration_time_secs,
             chain_id,
         ),
@@ -400,12 +388,7 @@ fn new_raw_transaction(
 impl Arbitrary for RawTransaction {
     type Parameters = ();
     fn arbitrary_with(_args: ()) -> Self::Strategy {
-        Self::strategy_impl(
-            any::<AccountAddress>(),
-            any::<TransactionPayload>(),
-            any::<String>(),
-        )
-        .boxed()
+        Self::strategy_impl(any::<AccountAddress>(), any::<TransactionPayload>()).boxed()
     }
 
     type Strategy = BoxedStrategy<Self>;
@@ -416,67 +399,38 @@ impl SignatureCheckedTransaction {
     // just one kind of them.
     pub fn script_strategy(
         keypair_strategy: impl Strategy<Value = KeyPair<Ed25519PrivateKey, Ed25519PublicKey>>,
-        gas_currency_code_strategy: impl Strategy<Value = String>,
     ) -> impl Strategy<Value = Self> {
-        Self::strategy_impl(
-            keypair_strategy,
-            TransactionPayload::script_strategy(),
-            gas_currency_code_strategy,
-        )
+        Self::strategy_impl(keypair_strategy, TransactionPayload::script_strategy())
     }
 
     pub fn module_strategy(
         keypair_strategy: impl Strategy<Value = KeyPair<Ed25519PrivateKey, Ed25519PublicKey>>,
-        gas_currency_code_strategy: impl Strategy<Value = String>,
     ) -> impl Strategy<Value = Self> {
-        Self::strategy_impl(
-            keypair_strategy,
-            TransactionPayload::module_strategy(),
-            gas_currency_code_strategy,
-        )
+        Self::strategy_impl(keypair_strategy, TransactionPayload::module_strategy())
     }
 
     pub fn write_set_strategy(
         keypair_strategy: impl Strategy<Value = KeyPair<Ed25519PrivateKey, Ed25519PublicKey>>,
-        gas_currency_code_strategy: impl Strategy<Value = String>,
     ) -> impl Strategy<Value = Self> {
-        Self::strategy_impl(
-            keypair_strategy,
-            TransactionPayload::write_set_strategy(),
-            gas_currency_code_strategy,
-        )
+        Self::strategy_impl(keypair_strategy, TransactionPayload::write_set_strategy())
     }
 
     pub fn genesis_strategy(
         keypair_strategy: impl Strategy<Value = KeyPair<Ed25519PrivateKey, Ed25519PublicKey>>,
-        gas_currency_code_strategy: impl Strategy<Value = String>,
     ) -> impl Strategy<Value = Self> {
-        Self::strategy_impl(
-            keypair_strategy,
-            TransactionPayload::genesis_strategy(),
-            gas_currency_code_strategy,
-        )
+        Self::strategy_impl(keypair_strategy, TransactionPayload::genesis_strategy())
     }
 
     fn strategy_impl(
         keypair_strategy: impl Strategy<Value = KeyPair<Ed25519PrivateKey, Ed25519PublicKey>>,
         payload_strategy: impl Strategy<Value = TransactionPayload>,
-        gas_currency_code_strategy: impl Strategy<Value = String>,
     ) -> impl Strategy<Value = Self> {
-        (
-            keypair_strategy,
-            payload_strategy,
-            gas_currency_code_strategy,
-        )
-            .prop_flat_map(|(keypair, payload, gas_currency_code)| {
+        (keypair_strategy, payload_strategy)
+            .prop_flat_map(|(keypair, payload)| {
                 let address = account_address::from_public_key(&keypair.public_key);
                 (
                     Just(keypair),
-                    RawTransaction::strategy_impl(
-                        Just(address),
-                        Just(payload),
-                        Just(gas_currency_code),
-                    ),
+                    RawTransaction::strategy_impl(Just(address), Just(payload)),
                 )
             })
             .prop_flat_map(|(keypair, raw_txn)| {
@@ -519,12 +473,7 @@ impl SignatureCheckedTransactionGen {
 impl Arbitrary for SignatureCheckedTransaction {
     type Parameters = ();
     fn arbitrary_with(_args: ()) -> Self::Strategy {
-        Self::strategy_impl(
-            ed25519::keypair_strategy(),
-            any::<TransactionPayload>(),
-            any::<String>(),
-        )
-        .boxed()
+        Self::strategy_impl(ed25519::keypair_strategy(), any::<TransactionPayload>()).boxed()
     }
 
     type Strategy = BoxedStrategy<Self>;
@@ -692,31 +641,6 @@ impl ContractEventGen {
 }
 
 #[derive(Arbitrary, Debug)]
-pub struct DiemAccountResourceGen {
-    withdrawal_capability: Option<WithdrawCapabilityResource>,
-    key_rotation_capability: Option<KeyRotationCapabilityResource>,
-}
-
-impl DiemAccountResourceGen {
-    pub fn materialize(
-        self,
-        account_index: Index,
-        universe: &AccountInfoUniverse,
-    ) -> DiemAccountResource {
-        let account_info = universe.get_account_info(account_index);
-
-        DiemAccountResource::new(
-            account_info.sequence_number,
-            account_info.public_key.to_bytes().to_vec(),
-            self.withdrawal_capability,
-            self.key_rotation_capability,
-            account_info.sent_event_handle.clone(),
-            account_info.received_event_handle.clone(),
-        )
-    }
-}
-
-#[derive(Arbitrary, Debug)]
 pub struct AccountResourceGen;
 
 impl AccountResourceGen {
@@ -747,7 +671,6 @@ impl BalanceResourceGen {
 
 #[derive(Arbitrary, Debug)]
 pub struct AccountStateBlobGen {
-    diem_account_resource_gen: DiemAccountResourceGen,
     balance_resource_gen: BalanceResourceGen,
     account_resource_gen: AccountResourceGen,
 }
@@ -758,15 +681,11 @@ impl AccountStateBlobGen {
         account_index: Index,
         universe: &AccountInfoUniverse,
     ) -> AccountStateBlob {
-        let diem_account_resource = self
-            .diem_account_resource_gen
-            .materialize(account_index, universe);
         let account_resource = self
             .account_resource_gen
             .materialize(account_index, universe);
         let balance_resource = self.balance_resource_gen.materialize();
-        AccountStateBlob::try_from((&account_resource, &diem_account_resource, &balance_resource))
-            .unwrap()
+        AccountStateBlob::try_from((&account_resource, &balance_resource)).unwrap()
     }
 }
 
@@ -849,7 +768,7 @@ pub struct TransactionToCommitGen {
     /// Gas used.
     gas_used: u64,
     /// Transaction status
-    status: KeptVMStatus,
+    status: ExecutionStatus,
 }
 
 impl TransactionToCommitGen {
@@ -865,21 +784,34 @@ impl TransactionToCommitGen {
             .collect();
         // Account states must be materialized last, to reflect the latest account and event
         // sequence numbers.
-        let account_states = self
+        let account_states: HashMap<AccountAddress, AccountStateBlob> = self
             .account_state_gens
             .into_iter()
             .map(|(index, blob_gen)| {
                 (
-                    StateKey::AccountAddressKey(universe.get_account_info(index).address),
-                    StateValue::from(blob_gen.materialize(index, universe)),
+                    universe.get_account_info(index).address,
+                    blob_gen.materialize(index, universe),
                 )
             })
             .collect();
 
+        let mut state_updates = HashMap::new();
+        for (account_address, blob) in account_states {
+            AccountState::try_from(&blob)
+                .unwrap()
+                .iter()
+                .for_each(|(key, value)| {
+                    state_updates.insert(
+                        StateKey::AccessPath(AccessPath::new(account_address, key.clone())),
+                        StateValue::from(value.clone()),
+                    );
+                });
+        }
+
         TransactionToCommit::new(
             Transaction::UserTransaction(transaction),
             TransactionInfo::new_placeholder(self.gas_used, self.status),
-            account_states,
+            state_updates,
             None,
             self.write_set,
             events,
@@ -908,7 +840,7 @@ impl Arbitrary for TransactionToCommitGen {
             vec((any::<Index>(), any::<AccountStateBlobGen>()), 0..=1),
             any::<WriteSet>(),
             any::<u64>(),
-            any::<KeptVMStatus>(),
+            any::<ExecutionStatus>(),
         )
             .prop_map(
                 |(sender, event_emitters, mut touched_accounts, write_set, gas_used, status)| {

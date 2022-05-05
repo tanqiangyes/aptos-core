@@ -5,15 +5,15 @@ module AptosFramework::Reconfiguration {
     use Std::Event;
     use Std::Signer;
     use Std::GUID;
-    use AptosFramework::Timestamp;
     use AptosFramework::SystemAddresses;
+    use AptosFramework::Timestamp;
+    use AptosFramework::Stake;
 
-    friend AptosFramework::Account;
+    friend AptosFramework::Block;
+    // TODO: migrate all to callback in block prologue
     friend AptosFramework::ConsensusConfig;
-    friend AptosFramework::ValidatorSystem;
     friend AptosFramework::Version;
     friend AptosFramework::VMConfig;
-    friend AptosFramework::ParallelExecutionConfig;
     friend AptosFramework::TransactionPublishingOption;
 
     /// Event that signals consensus to start a new epoch,
@@ -89,9 +89,20 @@ module AptosFramework::Reconfiguration {
         !exists<DisableReconfiguration>(@CoreResources)
     }
 
+    /// Force an epoch change.
+    public(script) fun force_reconfigure(account: &signer) acquires Configuration {
+        SystemAddresses::assert_core_resource(account);
+        reconfigure();
+    }
+
     /// Signal validators to start using new configuration. Must be called from friend config modules.
     public(friend) fun reconfigure() acquires Configuration {
+        Stake::on_new_epoch();
         reconfigure_();
+    }
+
+    public fun last_reconfiguration_time(): u64 acquires Configuration {
+        borrow_global<Configuration>(@CoreResources).last_reconfiguration_time
     }
 
     /// Private function to do reconfiguration.  Updates reconfiguration status resource

@@ -46,8 +46,9 @@ mod state;
 mod tests;
 
 // Useful constants for the Aptos Data Client
-const GLOBAL_DATA_LOG_FREQ_SECS: u64 = 3;
-const POLLER_ERROR_LOG_FREQ_SECS: u64 = 3;
+const GLOBAL_DATA_LOG_FREQ_SECS: u64 = 5;
+const GLOBAL_DATA_METRIC_FREQ_SECS: u64 = 1;
+const POLLER_ERROR_LOG_FREQ_SECS: u64 = 1;
 
 /// An [`AptosDataClient`] that fulfills requests from remote peers' Storage Service
 /// over AptosNet.
@@ -140,30 +141,48 @@ impl AptosNetDataClient {
             .copied()
             .ok_or_else(|| {
                 Error::DataIsUnavailable(
-                    "No connected peers are advertising that they can serve this data!".to_owned(),
+                    format!("No connected peers are advertising that they can serve this data! Request: {:?}",request),
                 )
             })
     }
 
-    /// Fetches the next group of peers to poll. The group will contain: (i) the peer who was last
-    /// polled (i.e., contains the oldest data); and (ii) any (new) peers that have connected
-    /// since the last time this method was called (i.e., the peers that have not been polled yet).
+    /// Fetches the next group of peers to poll. The group will contain: (i) any (new) peers that
+    /// have connected since the last time this method was called (i.e., the peers that have not
+    /// been polled yet); (ii) at most one prioritized peer (e.g., those that are upstream); and
+    /// (iii) at most one non-prioritized peer (i.e., those that are downstream).
     fn fetch_peers_to_poll(&self) -> Result<Vec<PeerNetworkId>, Error> {
-        // Fetch all (new) unpolled peers
-        let mut peers_to_poll = self
-            .get_all_connected_peers()?
-            .into_iter()
-            .filter(|peer| !self.peer_states.read().already_polled_peer(peer))
-            .collect::<Vec<_>>();
+        let mut peers_to_poll = vec![];
 
-        // Fetch the last polled peer
-        if let Some(peer) = self.peer_states.write().oldest_polled_peer() {
+        // Fetch the last polled high-priority peer
+        if let Some(peer) = self.peer_states.write().oldest_polled_priority_peer() {
             peers_to_poll.push(peer);
         }
 
-        // Mark these peers as now polled
+        // Fetch all new peers (i.e., those not yet polled)
+        for peer in self.get_all_connected_peers()? {
+            if !self.peer_states.read().already_polled_peer(&peer) {
+                peers_to_poll.push(peer);
+            }
+        }
+
+        // Handle regular peer polling
+        if peers_to_poll.is_empty() {
+            // Always try and poll at least one peer
+            if let Some(peer) = self.peer_states.write().oldest_polled_regular_peer() {
+                peers_to_poll.push(peer);
+            }
+        } else {
+            // Poll regular peers at a 1/3 reduced frequency
+            sample!(SampleRate::Frequency(3), {
+                if let Some(peer) = self.peer_states.write().oldest_polled_regular_peer() {
+                    peers_to_poll.push(peer);
+                }
+            });
+        }
+
+        // Mark all peers as polled
         for peer in &peers_to_poll {
-            self.peer_states.write().add_polled_peer(*peer);
+            self.peer_states.write().mark_peer_as_polled(peer);
         }
 
         Ok(peers_to_poll)
@@ -203,10 +222,10 @@ impl AptosNetDataClient {
         E: Into<Error>,
     {
         let peer = self.choose_peer_for_request(&request).map_err(|error| {
-            error!(
+            debug!(
                 (LogSchema::new(LogEntry::StorageServiceRequest)
                     .event(LogEvent::PeerSelectionError)
-                    .message("Unable to select next peer")
+                    .message("Unable to select peer")
                     .error(&error))
             );
             error
@@ -556,7 +575,7 @@ impl DataSummaryPoller {
                 // Log the new global data summary and update the metrics
                 sample!(
                     SampleRate::Duration(Duration::from_secs(GLOBAL_DATA_LOG_FREQ_SECS)),
-                    debug!(
+                    info!(
                         (LogSchema::new(LogEntry::PeerStates)
                             .event(LogEvent::AggregateSummary)
                             .message(&format!(
@@ -564,7 +583,10 @@ impl DataSummaryPoller {
                                 self.data_client.get_global_data_summary()
                             )))
                     );
-                    let global_data_summary = self.data_client.global_summary_cache.read().clone();
+                );
+                sample!(
+                    SampleRate::Duration(Duration::from_secs(GLOBAL_DATA_METRIC_FREQ_SECS)),
+                    let global_data_summary = self.data_client.get_global_data_summary();
                     update_advertised_data_metrics(global_data_summary);
                 );
             }

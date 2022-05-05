@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    access_path_cache::AccessPathCache, aptos_vm_impl::convert_changeset_and_events_cached,
+    access_path_cache::AccessPathCache,
+    aptos_vm_impl::{convert_changeset_and_events_cached, convert_table_changeset},
+    move_vm_ext::MoveResolverExt,
     transaction_metadata::TransactionMetadata,
 };
 use aptos_crypto::{hash::CryptoHash, HashValue};
@@ -10,15 +12,16 @@ use aptos_crypto_derive::{BCSCryptoHash, CryptoHasher};
 use aptos_types::{
     block_metadata::BlockMetadata,
     transaction::{ChangeSet, SignatureCheckedTransaction},
+    write_set::WriteSetMut,
 };
-use move_binary_format::errors::VMResult;
+use move_binary_format::errors::{Location, VMResult};
 use move_core_types::{
     account_address::AccountAddress,
     effects::{ChangeSet as MoveChangeSet, Event as MoveEvent},
-    resolver::MoveResolver,
-    vm_status::VMStatus,
+    vm_status::{StatusCode, VMStatus},
 };
-use move_vm_runtime::{native_functions::NativeContextExtensions, session::Session};
+use move_table_extension::NativeTableContext;
+use move_vm_runtime::{native_extensions::NativeContextExtensions, session::Session};
 use serde::{Deserialize, Serialize};
 use std::{
     convert::TryInto,
@@ -87,13 +90,13 @@ pub struct SessionExt<'r, 'l, S> {
 
 impl<'r, 'l, S> SessionExt<'r, 'l, S>
 where
-    S: MoveResolver,
+    S: MoveResolverExt,
 {
     pub fn new(inner: Session<'r, 'l, S>) -> Self {
         Self { inner }
     }
 
-    pub fn finish(self) -> VMResult<SessionOutput> {
+    pub fn finish(self) -> VMResult<SessionOutput<'r>> {
         let (change_set, events, extensions) = self.inner.finish_with_extensions()?;
         Ok(SessionOutput {
             change_set,
@@ -117,23 +120,40 @@ impl<'r, 'l, S> DerefMut for SessionExt<'r, 'l, S> {
     }
 }
 
-pub struct SessionOutput {
+pub struct SessionOutput<'r> {
     pub change_set: MoveChangeSet,
     pub events: Vec<MoveEvent>,
-    pub extensions: NativeContextExtensions,
+    pub extensions: NativeContextExtensions<'r>,
 }
 
-impl SessionOutput {
+impl<'r> SessionOutput<'r> {
     pub fn into_change_set<C: AccessPathCache>(
-        self,
+        mut self,
         ap_cache: &mut C,
     ) -> Result<ChangeSet, VMStatus> {
-        // TODO: consider table change set from the table extension
-        convert_changeset_and_events_cached(ap_cache, self.change_set, self.events)
-            .map(|(write_set, events)| ChangeSet::new(write_set, events))
+        let mut out_write_set = WriteSetMut::new(Vec::new());
+        let mut out_events = Vec::new();
+        convert_changeset_and_events_cached(
+            ap_cache,
+            self.change_set,
+            self.events,
+            &mut out_write_set,
+            &mut out_events,
+        )?;
+
+        let table_context: NativeTableContext = self.extensions.remove();
+        let table_changeset = table_context
+            .into_change_set()
+            .map_err(|e| e.finish(Location::Undefined))?;
+        convert_table_changeset(table_changeset, &mut out_write_set)?;
+
+        let ws = out_write_set
+            .freeze()
+            .map_err(|_| VMStatus::Error(StatusCode::DATA_FORMAT_ERROR))?;
+        Ok(ChangeSet::new(ws, out_events))
     }
 
-    pub fn unpack(self) -> (MoveChangeSet, Vec<MoveEvent>, NativeContextExtensions) {
+    pub fn unpack(self) -> (MoveChangeSet, Vec<MoveEvent>, NativeContextExtensions<'r>) {
         (self.change_set, self.events, self.extensions)
     }
 }

@@ -1,18 +1,45 @@
 {
   "type": "user_transaction",
   "version": "2",
-  "hash": "0x2bf7670f9cea191af66917f1a2d3592fe82c9d004b66ab62ac8162e6d45af145",
-  "state_root_hash": "0x35704a7851c5e2da0ef26eae6d11826060066f9c09365ba1cd3a037ee9c5fb7b",
+  "hash": "0xd99666ee3f06d5d564d1e8bf5955a020e7634fd9b539c2b6bab071670548f625",
+  "state_root_hash": "0x55a1d03a8eafc125b1a3a320ebfac3ba83f902aaf946e0ad1e958620e116630f",
   "event_root_hash": "0x414343554d554c41544f525f504c414345484f4c4445525f4841534800000000",
   "gas_used": "1",
   "success": false,
-  "vm_status": "Move bytecode deserialization / verification failed, including script function not found or invalid arguments",
-  "accumulator_root_hash": "0xb990ba156edc06edbaf55276039b9d7a7bbe7e4ca4fc5ed606952071a41bd027",
+  "vm_status": "Transaction Executed and Committed with Error CODE_DESERIALIZATION_ERROR",
+  "accumulator_root_hash": "0x77aa90bc2c944c87f9de00ac920f7fe0abdd946dad95260831d68a7c4a1c6caa",
+  "changes": [
+    {
+      "type": "write_resource",
+      "address": "0xa550c18",
+      "state_key_hash": "0xa85a3f04345fb96b11d0e4f8b85a04475452f309d6305d8a4de891bd22392995",
+      "data": {
+        "type": "0x1::Account::Account",
+        "data": {
+          "authentication_key": "0x7deeccb1080854f499ec8b4c1b213b82c5e34b925cf6875fec02d4b77adbd2d6",
+          "self_address": "0xa550c18",
+          "sequence_number": "1"
+        }
+      }
+    },
+    {
+      "type": "write_resource",
+      "address": "0xa550c18",
+      "state_key_hash": "0x6b3ef01fe5ffd2a5a4bc8921a900ff6281fce77cda659e1b89c93a08e7a6507f",
+      "data": {
+        "type": "0x1::TestCoin::Balance",
+        "data": {
+          "coin": {
+            "value": "18446744073709551614"
+          }
+        }
+      }
+    }
+  ],
   "sender": "0xa550c18",
   "sequence_number": "0",
   "max_gas_amount": "2000",
   "gas_unit_price": "0",
-  "gas_currency_code": "XUS",
   "expiration_timestamp_secs": "18446744073709551615",
   "payload": {
     "type": "script_payload",
@@ -26,7 +53,7 @@
   "signature": {
     "type": "ed25519_signature",
     "public_key": "0xb9c6ee1630ef3e711144a648db06bbb2284f7274cfbee53ffcee503cc1a49200",
-    "signature": "0x7c0138e74c71b9178ecedcd2feb19379db4f867c17cbb9eca630d3dce4017e1fe1802afedd1648edbf1cca16064abf9a4a52964eb5cc7b776eef2136f3d9bb04"
+    "signature": "0x13f4a33ffb8189fc0c13875055ca2f8e6b22b2a1ea9f9348cb5e68613c36aea8c2530b03ef27ca6a393b7484e2afe4dc8c4128a84b77bedeef4b2bff8651fa03"
   },
   "events": [],
   "timestamp": "1"

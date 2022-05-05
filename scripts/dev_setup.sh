@@ -375,8 +375,10 @@ function install_tidy {
 function install_gcc_powerpc_linux_gnu {
   PACKAGE_MANAGER=$1
   #Differently named packages for gcc-powerpc-linux-gnu
-  if [[ "$PACKAGE_MANAGER" == "apt-get" ]] || [[ "$PACKAGE_MANAGER" == "yum" ]]; then
+  if [[ "$PACKAGE_MANAGER" == "apt-get" ]]; then
     install_pkg gcc-powerpc-linux-gnu "$PACKAGE_MANAGER"
+  elif [[ "$PACKAGE_MANAGER" == "yum" ]] || [[ "$PACKAGE_MANAGER" == "dnf" ]]; then
+    install_pkg gcc-powerpc64-linux-gnu "$PACKAGE_MANAGER"
   fi
   #if [[ "$PACKAGE_MANAGER" == "pacman" ]]; then
   #  install_pkg powerpc-linux-gnu-gcc "$PACKAGE_MANAGER"
@@ -626,6 +628,21 @@ function install_python3 {
   fi
 }
 
+function install_postgres {
+  if [[ "$PACKAGE_MANAGER" == "apt-get" ]] || [[ "$PACKAGE_MANAGER" == "apk" ]]; then
+    install_pkg libpq-dev "$PACKAGE_MANAGER"
+  fi
+  if [[ "$PACKAGE_MANAGER" == "pacman" ]] || [[ "$PACKAGE_MANAGER" == "yum" ]]; then
+    install_pkg postgresql-libs "$PACKAGE_MANAGER"
+  fi
+  if [[ "$PACKAGE_MANAGER" == "dnf" ]]; then
+    install_pkg libpq-devel "$PACKAGE_MANAGER"
+  fi
+  if [[ "$PACKAGE_MANAGER" == "brew" ]]; then
+    install_pkg postgresql "$PACKAGE_MANAGER"
+  fi
+}
+
 function welcome_message {
 cat <<EOF
 Welcome to Aptos!
@@ -868,6 +885,7 @@ if [[ "$INSTALL_BUILD_TOOLS" == "true" ]]; then
   install_cargo_guppy
   install_sccache
   install_grcov
+  install_postgres
   install_pkg git "$PACKAGE_MANAGER"
   install_lcov "$PACKAGE_MANAGER"
   install_nodejs "$PACKAGE_MANAGER"

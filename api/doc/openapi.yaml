@@ -65,6 +65,7 @@ paths:
       operationId: get_account
       tags:
         - accounts
+        - state
       parameters:
         - $ref: '#/components/parameters/AccountAddress'
       responses:
@@ -86,6 +87,7 @@ paths:
       operationId: get_account_resources
       tags:
         - accounts
+        - state
       parameters:
         - $ref: '#/components/parameters/AccountAddress'
         - $ref: '#/components/parameters/LedgerVersion'
@@ -110,12 +112,47 @@ paths:
           $ref: '#/components/responses/404'
         "500":
           $ref: '#/components/responses/500'
+  /accounts/{address}/resource/{resource_type}:
+    get:
+      summary: Get resource by account address and resource type.
+      operationId: get_account_resource # TODO: make it query_resource if query path is supported
+      description: |
+        This API renders a resource identified by the owner account
+        `address` and the `resource_type`, at a ledger version (AKA
+        transaction version) specified as a query param, otherwise the
+        latest version is used.
+      tags:
+        - accounts
+        - state
+      parameters:
+        - $ref: '#/components/parameters/AccountAddress'
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/MoveStructTagId'
+          example: "0x1::AptosAccount::AptosAccount"
+        - $ref: '#/components/parameters/LedgerVersion'
+      responses:
+        "200":
+          description: Returns a resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResource'
+        "400":
+          $ref: '#/components/responses/400'
+        "404":
+          $ref: '#/components/responses/404'
+        "500":
+          $ref: '#/components/responses/500'
   /accounts/{address}/modules:
     get:
       summary: Get account modules
       operationId: get_account_modules
       tags:
         - accounts
+        - state
       parameters:
         - $ref: '#/components/parameters/AccountAddress'
         - $ref: '#/components/parameters/LedgerVersion'
@@ -134,6 +171,42 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/MoveModule'
+        "400":
+          $ref: '#/components/responses/400'
+        "404":
+          $ref: '#/components/responses/404'
+        "500":
+          $ref: '#/components/responses/500'
+  /accounts/{address}/module/{module_name}:
+    get:
+      summary: Get module by module id.
+      operationId: get_account_module
+      description: |
+        This API renders a Move module identified by the module id. A
+        module id consists of the module owner `address` and the
+        `module_name`. The module is rendered at a ledger version (AKA
+        transaction version) specified as a query param, otherwise the
+        latest version is used.
+      tags:
+        - accounts
+        - state
+      parameters:
+        - $ref: '#/components/parameters/AccountAddress'
+        - name: module_name
+          in: path
+          required: true
+          description: The name of the module.
+          schema:
+            type: string
+          example: "GUID"
+        - $ref: '#/components/parameters/LedgerVersion'
+      responses:
+        "200":
+          description: Returns a move module.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MoveModule'
         "400":
           $ref: '#/components/responses/400'
         "404":
@@ -369,6 +442,8 @@ paths:
           schema:
             type: string
           example: "sent_events"
+        - $ref: '#/components/parameters/EventStart'
+        - $ref: '#/components/parameters/EventLimit'
       responses:
         "200":
           description: |
@@ -383,6 +458,50 @@ paths:
           $ref: '#/components/responses/400'
         "404":
           $ref: '#/components/responses/404'
+        "500":
+          $ref: '#/components/responses/500'
+  /tables/{table_handle}/items:
+    post:
+      summary: Get table item by handle and key.
+      description: |
+        Gets a table item for a table identified by the handle and the key for the item.
+        Key and value types need to be passed in to help with key serialization and value deserialization.
+      operationId: get_table_item
+      tags:
+        - state
+        - table
+      parameters:
+        - name: table_handle
+          in: path
+          required: true
+          schema:
+            title: Table Handle
+            type: string
+            format: uint128
+            description: the table handle
+          example: "1283023094380"
+      requestBody:
+        description: Table item request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TableItemRequest'
+      responses:
+        "200":
+          description: Returns the table item value rendered in JSON.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: '#/components/responses/400'
+        "404":
+          $ref: '#/components/responses/404'
+        "413":
+          $ref: '#/components/responses/413'
+        "415":
+          $ref: '#/components/responses/415'
         "500":
           $ref: '#/components/responses/500'
 components:
@@ -412,6 +531,23 @@ components:
       in: query
       required: false
       description: The max number of transactions should be returned for the page. Default is 25.
+      example: 25
+      schema:
+        type: integer
+    EventStart:
+      name: start
+      in: query
+      required: false
+      description: |
+        The start sequence number in the EVENT STREAM, defaulting to the latest event.
+        The events are returned in the reverse order of sequence numbers.
+      schema:
+        type: integer
+    EventLimit:
+      name: limit
+      in: query
+      required: false
+      description: The number of events to be returned for the page default is 5
       example: 25
       schema:
         type: integer
@@ -616,7 +752,7 @@ components:
     MoveTypeTagId:
       title: Move Type Tag ID
       type: string
-      pattern: '^(bool|u8|u64|u128|address|signer|vector<.+>|0x[0-9a-zA-Z:_<>]+)$'
+      pattern: '^(bool|u8|u64|u128|address|signer|vector<.+>|0x[0-9a-zA-Z:_<, >]+)$'
       description: |
         String representation of an on-chain Move type tag that is exposed in transaction payload.
 
@@ -647,7 +783,7 @@ components:
     MoveTypeId:
       title: Move Type ID
       type: string
-      pattern: '^(bool|u8|u64|u128|address|signer|vector<.+>|0x[0-9a-zA-Z:_<>]+|^&(mut )?.+$|T\d+)$'
+      pattern: '^(bool|u8|u64|u128|address|signer|vector<.+>|0x[0-9a-zA-Z:_<, >]+|^&(mut )?.+$|T\d+)$'
       description: |
         String representation of an on-chain Move type identifier defined by the Move language.
 
@@ -998,6 +1134,7 @@ components:
         - success
         - vm_status
         - accumulator_root_hash
+        - changes
       properties:
         version:
           $ref: '#/components/schemas/Uint64'
@@ -1020,6 +1157,10 @@ components:
             Human readable transaction execution result message from Aptos VM.
         accumulator_root_hash:
           $ref: '#/components/schemas/HexEncodedBytes'
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/WriteSetChange'
     UserTransaction:
       title: User Transaction
       type: object
@@ -1233,8 +1374,10 @@ components:
       oneOf:
         - $ref: '#/components/schemas/DeleteModule'
         - $ref: '#/components/schemas/DeleteResource'
+        - $ref: '#/components/schemas/DeleteTableItem'
         - $ref: '#/components/schemas/WriteModule'
         - $ref: '#/components/schemas/WriteResource'
+        - $ref: '#/components/schemas/WriteTableItem'
       discriminator:
         propertyName: type
     DeleteModule:
@@ -1242,12 +1385,15 @@ components:
       type: object
       required:
         - type
+        - state_key_hash
         - address
         - module
       properties:
         type:
           type: string
           example: "delete_module"
+        state_key_hash:
+          $ref: '#/components/schemas/HexEncodedBytes'
         address:
           $ref: '#/components/schemas/Address'
         module:
@@ -1258,28 +1404,59 @@ components:
       description: Delete account resource change.
       required:
         - type
+        - state_key_hash
         - address
         - resource
       properties:
         type:
           type: string
           example: "delete_resource"
+        state_key_hash:
+          $ref: '#/components/schemas/HexEncodedBytes'
         address:
           $ref: '#/components/schemas/Address'
         resource:
           $ref: '#/components/schemas/MoveStructTagId'
+    DeleteTableItem:
+      title: Delete Table Item
+      type: object
+      description: Delete table item change.
+      required:
+        - type
+        - state_key_hash
+        - data
+      properties:
+        type:
+          type: string
+          example: "delete_table_item"
+        state_key_hash:
+          $ref: '#/components/schemas/HexEncodedBytes'
+        data:
+          title: Table item deletion
+          type: object
+          required:
+            - handle
+            - key
+          properties:
+            handle:
+              $ref: '#/components/schemas/HexEncodedBytes'
+            key:
+              $ref: '#/components/schemas/HexEncodedBytes'
     WriteModule:
       title: Write Module
       type: object
       description: Write move module
       required:
         - type
+        - state_key_hash
         - address
         - data
       properties:
         type:
           type: string
           example: "write_module"
+        state_key_hash:
+          $ref: '#/components/schemas/HexEncodedBytes'
         address:
           $ref: '#/components/schemas/Address'
         data:
@@ -1290,16 +1467,47 @@ components:
       description: Write account resource
       required:
         - type
+        - state_key_hash
         - address
         - data
       properties:
         type:
           type: string
           example: "write_resource"
+        state_key_hash:
+          $ref: '#/components/schemas/HexEncodedBytes'
         address:
           $ref: '#/components/schemas/Address'
         data:
           $ref: '#/components/schemas/AccountResource'
+    WriteTableItem:
+      title: Write Table Item
+      type: object
+      description: Write table item
+      required:
+        - type
+        - state_key_hash
+        - data
+      properties:
+        type:
+          type: string
+          example: "write_table_item"
+        state_key_hash:
+          $ref: '#/components/schemas/HexEncodedBytes'
+        data:
+          title: Table item write
+          type: object
+          required:
+            - handle
+            - key
+            - value
+          properties:
+            handle:
+              $ref: '#/components/schemas/HexEncodedBytes'
+            key:
+              $ref: '#/components/schemas/HexEncodedBytes'
+            value:
+              $ref: '#/components/schemas/HexEncodedBytes'
     Script:
       title: Script
       type: object
@@ -1487,3 +1695,17 @@ components:
         - $ref: '#/components/schemas/MultiEd25519Signature'
       discriminator:
         propertyName: type
+    TableItemRequest:
+      title: Table item request
+      type: object
+      required:
+        - key_type
+        - value_type
+        - key
+      properties:
+        key_type:
+          $ref: '#/components/schemas/MoveTypeId'
+        value_type:
+          $ref: '#/components/schemas/MoveTypeId'
+        key:
+          $ref: '#/components/schemas/MoveValue'

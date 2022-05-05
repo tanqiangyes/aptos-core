@@ -12,7 +12,8 @@ use aptos_jellyfish_merkle::node_type::{Node, NodeKey};
 use aptos_temppath::TempPath;
 #[allow(unused_imports)]
 use aptos_types::account_state_blob::AccountStateBlob;
-use aptos_types::transaction::Transaction;
+#[allow(unused_imports)]
+use aptos_types::transaction::{ExecutionStatus, Transaction};
 #[allow(unused_imports)]
 use aptos_types::{
     account_address::{AccountAddress, HashAccountAddress},
@@ -20,7 +21,7 @@ use aptos_types::{
     contract_event::ContractEvent,
     ledger_info::LedgerInfo,
     proof::SparseMerkleLeafNode,
-    vm_status::{KeptVMStatus, StatusCode},
+    vm_status::StatusCode,
 };
 use proptest::prelude::*;
 use std::collections::HashMap;
@@ -634,25 +635,19 @@ fn test_get_latest_tree_state() {
     );
 
     // unbootstrapped db with pre-genesis state
-    let address = AccountAddress::ZERO;
-    let blob = AccountStateBlob::from(vec![1]);
+    let key = StateKey::Raw(String::from("test_key").into_bytes());
+    let value = StateValue::from(String::from("test_val").into_bytes());
+
     db.db
         .put::<JellyfishMerkleNodeSchema>(
             &NodeKey::new_empty_path(PRE_GENESIS_VERSION),
             &Node::new_leaf(
-                StateKey::AccountAddressKey(address).hash(),
-                StateKeyAndValue::new(
-                    StateKey::AccountAddressKey(address),
-                    StateValue::from(blob.clone()),
-                ),
+                key.hash(),
+                StateKeyAndValue::new(key.clone(), value.clone()),
             ),
         )
         .unwrap();
-    let hash = SparseMerkleLeafNode::new(
-        StateKey::AccountAddressKey(address).hash(),
-        StateValue::from(blob).hash(),
-    )
-    .hash();
+    let hash = SparseMerkleLeafNode::new(key.hash(), value.hash()).hash();
     let pre_genesis = db.get_latest_tree_state().unwrap();
     assert_eq!(pre_genesis, TreeState::new(0, vec![], hash));
 
@@ -662,7 +657,7 @@ fn test_get_latest_tree_state() {
         HashValue::random(),
         HashValue::random(),
         0,
-        KeptVMStatus::MiscellaneousError,
+        ExecutionStatus::MiscellaneousError(None),
     );
     put_transaction_info(&db, 0, &txn_info);
     let bootstrapped = db.get_latest_tree_state().unwrap();

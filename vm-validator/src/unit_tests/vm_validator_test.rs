@@ -1,14 +1,11 @@
 // Copyright (c) Aptos
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::vm_validator::{TransactionValidation, VMValidator};
+use crate::vm_validator::{get_account_sequence_number, TransactionValidation, VMValidator};
 use aptos_crypto::{ed25519::Ed25519PrivateKey, PrivateKey, Uniform};
-use aptos_transaction_builder::aptos_stdlib::{
-    encode_mint_script_function, encode_transfer_script_function,
-};
+use aptos_transaction_builder::aptos_stdlib;
 use aptos_types::{
     account_address, account_config,
-    account_config::XUS_NAME,
     chain_id::ChainId,
     test_helpers::transaction_test_helpers,
     transaction::{Module, Script, TransactionPayload},
@@ -16,7 +13,10 @@ use aptos_types::{
 };
 use aptos_vm::AptosVM;
 use aptosdb::AptosDB;
-use move_core_types::gas_schedule::{GasAlgebra, GasConstants, MAX_TRANSACTION_SIZE_IN_BYTES};
+use move_core_types::{
+    account_address::AccountAddress,
+    gas_schedule::{GasAlgebra, GasConstants, MAX_TRANSACTION_SIZE_IN_BYTES},
+};
 use rand::SeedableRng;
 use storage_interface::DbReaderWriter;
 
@@ -79,7 +79,7 @@ fn test_validate_transaction() {
     let vm_validator = TestValidator::new();
 
     let address = account_config::aptos_root_address();
-    let program = encode_mint_script_function(address, 100);
+    let program = aptos_stdlib::encode_test_coin_mint(address, 100);
     let transaction = transaction_test_helpers::get_test_signed_txn(
         address,
         1,
@@ -100,7 +100,7 @@ fn test_validate_invalid_signature() {
     // Submit with an account using an different private/public keypair
 
     let address = account_config::aptos_root_address();
-    let program = encode_transfer_script_function(address, 100);
+    let program = aptos_stdlib::encode_test_coin_transfer(address, 100);
     let transaction = transaction_test_helpers::get_test_unchecked_txn(
         address,
         1,
@@ -132,8 +132,7 @@ fn test_validate_known_script_too_large_args() {
          * longer than the
          * max size */
         0,
-        0,                   /* max gas price */
-        XUS_NAME.to_owned(), /* gas currency code */
+        0, /* max gas price */
         None,
     );
     let ret = vm_validator.validate_transaction(transaction).unwrap();
@@ -155,9 +154,8 @@ fn test_validate_max_gas_units_above_max() {
         vm_genesis::GENESIS_KEYPAIR.1.clone(),
         None,
         0,
-        0,                   /* max gas price */
-        XUS_NAME.to_owned(), /* gas currency code */
-        Some(u64::MAX),      // Max gas units
+        0,              /* max gas price */
+        Some(u64::MAX), // Max gas units
     );
     let ret = vm_validator.validate_transaction(transaction).unwrap();
     assert_eq!(
@@ -188,14 +186,34 @@ fn test_validate_max_gas_units_below_min() {
             vec![],
         ))),
         0,
-        0,                   /* max gas price */
-        XUS_NAME.to_owned(), /* gas currency code */
-        Some(0),             // Max gas units
+        0,       /* max gas price */
+        Some(0), // Max gas units
     );
     let ret = vm_validator.validate_transaction(transaction).unwrap();
     assert_eq!(
         ret.status().unwrap(),
         StatusCode::MAX_GAS_UNITS_BELOW_MIN_TRANSACTION_GAS_UNITS
+    );
+}
+
+#[test]
+fn test_get_account_sequence_number() {
+    let vm_validator = TestValidator::new();
+    let root_address = account_config::aptos_root_address();
+    assert_eq!(
+        get_account_sequence_number(vm_validator.vm_validator.db_reader.clone(), root_address,)
+            .unwrap()
+            .min_seq(),
+        0
+    );
+    assert_eq!(
+        get_account_sequence_number(
+            vm_validator.vm_validator.db_reader,
+            AccountAddress::new([5u8; AccountAddress::LENGTH]),
+        )
+        .unwrap()
+        .min_seq(),
+        0
     );
 }
 
@@ -211,8 +229,7 @@ fn test_validate_max_gas_price_above_bounds() {
         vm_genesis::GENESIS_KEYPAIR.1.clone(),
         None,
         0,
-        u64::MAX,            /* max gas price */
-        XUS_NAME.to_owned(), /* gas currency code */
+        u64::MAX, /* max gas price */
         None,
     );
     let ret = vm_validator.validate_transaction(transaction).unwrap();
@@ -230,7 +247,7 @@ fn test_validate_max_gas_price_below_bounds() {
     let vm_validator = TestValidator::new();
 
     let address = account_config::aptos_root_address();
-    let program = encode_transfer_script_function(address, 100);
+    let program = aptos_stdlib::encode_test_coin_transfer(address, 100);
     let transaction = transaction_test_helpers::get_test_signed_transaction(
         address,
         1,
@@ -239,8 +256,7 @@ fn test_validate_max_gas_price_below_bounds() {
         Some(program),
         // Initial Time was set to 0 with a TTL 86400 secs.
         40000,
-        0,                   /* max gas price */
-        XUS_NAME.to_owned(), /* gas currency code */
+        0, /* max gas price */
         None,
     );
     let ret = vm_validator.validate_transaction(transaction).unwrap();
@@ -294,7 +310,7 @@ fn test_validate_invalid_auth_key() {
     // Submit with an account using an different private/public keypair
 
     let address = account_config::aptos_root_address();
-    let program = encode_transfer_script_function(address, 100);
+    let program = aptos_stdlib::encode_test_coin_transfer(address, 100);
     let transaction = transaction_test_helpers::get_test_signed_txn(
         address,
         1,
@@ -312,7 +328,7 @@ fn test_validate_account_doesnt_exist() {
 
     let address = account_config::aptos_root_address();
     let random_account_addr = account_address::AccountAddress::random();
-    let program = encode_transfer_script_function(address, 100);
+    let program = aptos_stdlib::encode_test_coin_transfer(address, 100);
     let transaction = transaction_test_helpers::get_test_signed_transaction(
         random_account_addr,
         1,
@@ -320,8 +336,7 @@ fn test_validate_account_doesnt_exist() {
         vm_genesis::GENESIS_KEYPAIR.1.clone(),
         Some(program),
         u64::MAX,
-        1,                   /* max gas price */
-        XUS_NAME.to_owned(), /* gas currency code */
+        1, /* max gas price */
         None,
     );
     let ret = vm_validator.validate_transaction(transaction).unwrap();
@@ -336,7 +351,7 @@ fn test_validate_sequence_number_too_new() {
     let vm_validator = TestValidator::new();
 
     let address = account_config::aptos_root_address();
-    let program = encode_transfer_script_function(address, 100);
+    let program = aptos_stdlib::encode_test_coin_transfer(address, 100);
     let transaction = transaction_test_helpers::get_test_signed_txn(
         address,
         1,
@@ -353,7 +368,7 @@ fn test_validate_invalid_arguments() {
     let vm_validator = TestValidator::new();
 
     let address = account_config::aptos_root_address();
-    let program = encode_transfer_script_function(address, 100);
+    let program = aptos_stdlib::encode_test_coin_transfer(address, 100);
     let transaction = transaction_test_helpers::get_test_signed_txn(
         address,
         1,
@@ -409,7 +424,6 @@ fn test_validate_expiration_time() {
         None, /* script */
         0,    /* expiration_time */
         0,    /* gas_unit_price */
-        XUS_NAME.to_owned(),
         None, /* max_gas_amount */
     );
     let ret = vm_validator.validate_transaction(transaction).unwrap();

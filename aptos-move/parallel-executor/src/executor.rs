@@ -111,17 +111,23 @@ where
     T: Transaction,
     E: ExecutorTask<T = T>,
 {
-    pub fn new() -> Self {
+    /// The caller needs to ensure that concurrency_level > 1 (0 is illegal and 1 should
+    /// be handled by sequential execution) and that concurrency_level <= num_cpus.
+    pub fn new(concurrency_level: usize) -> Self {
+        assert!(
+            concurrency_level > 1 && concurrency_level <= num_cpus::get(),
+            "Parallel execution concurrency level {} should be between 2 and number of CPUs",
+            concurrency_level
+        );
         Self {
-            // TODO: must be a configurable parameter.
-            concurrency_level: num_cpus::get(),
+            concurrency_level,
             phantom: PhantomData,
         }
     }
 
     fn execute<'a>(
         &self,
-        idx_to_execute: TxnIndex,
+        version: Version,
         guard: TaskGuard<'a>,
         signature_verified_block: &[T],
         last_input_output: &TxnLastInputOutput<
@@ -133,6 +139,7 @@ where
         scheduler: &'a Scheduler,
         executor: &E,
     ) -> SchedulerTask<'a> {
+        let (idx_to_execute, incarnation) = version;
         let txn = &signature_verified_block[idx_to_execute];
 
         let state_view = MVHashMapView {
@@ -144,7 +151,6 @@ where
 
         // VM execution.
         let execute_result = executor.execute_transaction(&state_view, txn);
-        let incarnation = scheduler.get_executing_incarnation(idx_to_execute);
         let mut prev_write_set: HashSet<T::Key> = last_input_output.write_set(idx_to_execute);
 
         // For tracking whether the recent execution wrote outside of the previous write set.
@@ -251,8 +257,8 @@ where
                     versioned_data_cache,
                     scheduler,
                 ),
-                SchedulerTask::ExecutionTask(idx_to_execute, None, guard) => self.execute(
-                    idx_to_execute,
+                SchedulerTask::ExecutionTask(version_to_execute, None, guard) => self.execute(
+                    version_to_execute,
                     guard,
                     block,
                     last_input_output,
@@ -306,7 +312,7 @@ where
             }
         });
 
-        // Extract outputs in parallel
+        // Extract outputs in parallel.
         let valid_results_size = scheduler.num_txn_to_execute();
         let chunk_size =
             (valid_results_size + 4 * self.concurrency_level - 1) / (4 * self.concurrency_level);

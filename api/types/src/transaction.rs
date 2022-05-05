@@ -18,7 +18,7 @@ use aptos_types::{
     contract_event::ContractEvent,
     transaction::{
         authenticator::{AccountAuthenticator, TransactionAuthenticator},
-        Script, SignedTransaction, TransactionWithProof,
+        Script, SignedTransaction, TransactionOutput, TransactionWithProof,
     },
 };
 
@@ -55,6 +55,7 @@ pub struct TransactionOnChainData {
     pub info: aptos_types::transaction::TransactionInfo,
     pub events: Vec<ContractEvent>,
     pub accumulator_root_hash: aptos_crypto::HashValue,
+    pub changes: aptos_types::write_set::WriteSet,
 }
 
 impl From<(TransactionWithProof, aptos_crypto::HashValue)> for TransactionOnChainData {
@@ -65,6 +66,32 @@ impl From<(TransactionWithProof, aptos_crypto::HashValue)> for TransactionOnChai
             info: txn.proof.transaction_info,
             events: txn.events.unwrap_or_default(),
             accumulator_root_hash,
+            changes: Default::default(),
+        }
+    }
+}
+
+impl
+    From<(
+        TransactionWithProof,
+        aptos_crypto::HashValue,
+        &TransactionOutput,
+    )> for TransactionOnChainData
+{
+    fn from(
+        (txn, accumulator_root_hash, txn_output): (
+            TransactionWithProof,
+            aptos_crypto::HashValue,
+            &TransactionOutput,
+        ),
+    ) -> Self {
+        Self {
+            version: txn.version,
+            transaction: txn.transaction,
+            info: txn.proof.transaction_info,
+            events: txn.events.unwrap_or_default(),
+            accumulator_root_hash,
+            changes: txn_output.write_set().clone(),
         }
     }
 }
@@ -76,15 +103,17 @@ impl
         aptos_types::transaction::TransactionInfo,
         Vec<ContractEvent>,
         aptos_crypto::HashValue,
+        aptos_types::write_set::WriteSet,
     )> for TransactionOnChainData
 {
     fn from(
-        (version, transaction, info, events, accumulator_root_hash): (
+        (version, transaction, info, events, accumulator_root_hash, write_set): (
             u64,
             aptos_types::transaction::Transaction,
             aptos_types::transaction::TransactionInfo,
             Vec<ContractEvent>,
             aptos_crypto::HashValue,
+            aptos_types::write_set::WriteSet,
         ),
     ) -> Self {
         Self {
@@ -93,6 +122,7 @@ impl
             info,
             events,
             accumulator_root_hash,
+            changes: write_set,
         }
     }
 }
@@ -118,6 +148,16 @@ impl Transaction {
         }
     }
 
+    pub fn version(&self) -> Option<u64> {
+        match self {
+            Transaction::UserTransaction(txn) => Some(txn.info.version.into()),
+            Transaction::BlockMetadataTransaction(txn) => Some(txn.info.version.into()),
+            Transaction::PendingTransaction(_) => None,
+            Transaction::GenesisTransaction(txn) => Some(txn.info.version.into()),
+            Transaction::StateCheckpointTransaction(txn) => Some(txn.info.version.into()),
+        }
+    }
+
     pub fn success(&self) -> bool {
         match self {
             Transaction::UserTransaction(txn) => txn.info.success,
@@ -139,6 +179,16 @@ impl Transaction {
             Transaction::PendingTransaction(_txn) => "pending".to_owned(),
             Transaction::GenesisTransaction(txn) => txn.info.vm_status.clone(),
             Transaction::StateCheckpointTransaction(txn) => txn.info.vm_status.clone(),
+        }
+    }
+
+    pub fn type_str(&self) -> &'static str {
+        match self {
+            Transaction::PendingTransaction(_) => "pending_transaction",
+            Transaction::UserTransaction(_) => "user_transaction",
+            Transaction::GenesisTransaction(_) => "genesis_transaction",
+            Transaction::BlockMetadataTransaction(_) => "block_metadata_transaction",
+            Transaction::StateCheckpointTransaction(_) => "state_checkpoint_transaction",
         }
     }
 
@@ -226,7 +276,6 @@ impl From<(&SignedTransaction, TransactionPayload)> for UserTransactionRequest {
             sequence_number: txn.sequence_number().into(),
             max_gas_amount: txn.max_gas_amount().into(),
             gas_unit_price: txn.gas_unit_price().into(),
-            gas_currency_code: txn.gas_currency_code().to_owned(),
             expiration_timestamp_secs: txn.expiration_timestamp_secs().into(),
             signature: Some(txn.authenticator().into()),
             payload,
@@ -244,6 +293,7 @@ pub struct TransactionInfo {
     pub success: bool,
     pub vm_status: String,
     pub accumulator_root_hash: HashValue,
+    pub changes: Vec<WriteSetChange>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -276,7 +326,6 @@ pub struct UserTransactionRequest {
     pub sequence_number: U64,
     pub max_gas_amount: U64,
     pub gas_unit_price: U64,
-    pub gas_currency_code: String,
     pub expiration_timestamp_secs: U64,
     pub payload: TransactionPayload,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -403,20 +452,48 @@ pub struct DirectWriteSet {
 pub enum WriteSetChange {
     DeleteModule {
         address: Address,
+        state_key_hash: String,
         module: MoveModuleId,
     },
     DeleteResource {
         address: Address,
+        state_key_hash: String,
         resource: MoveStructTag,
+    },
+    DeleteTableItem {
+        state_key_hash: String,
+        handle: HexEncodedBytes,
+        key: HexEncodedBytes,
     },
     WriteModule {
         address: Address,
+        state_key_hash: String,
         data: MoveModuleBytecode,
     },
     WriteResource {
         address: Address,
+        state_key_hash: String,
         data: MoveResource,
     },
+    WriteTableItem {
+        state_key_hash: String,
+        handle: HexEncodedBytes,
+        key: HexEncodedBytes,
+        value: HexEncodedBytes,
+    },
+}
+
+impl WriteSetChange {
+    pub fn type_str(&self) -> &'static str {
+        match self {
+            WriteSetChange::DeleteModule { .. } => "delete_module",
+            WriteSetChange::DeleteResource { .. } => "delete_resource",
+            WriteSetChange::DeleteTableItem { .. } => "delete_table_item",
+            WriteSetChange::WriteModule { .. } => "write_module",
+            WriteSetChange::WriteResource { .. } => "write_resource",
+            WriteSetChange::WriteTableItem { .. } => "write_table_item",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

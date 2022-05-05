@@ -378,7 +378,9 @@ impl<'t> TxnEmitter<'t> {
         index: usize,
     ) -> Result<LocalAccount> {
         let file = "vasp".to_owned() + index.to_string().as_str() + ".key";
-        let mint_key: Ed25519PrivateKey = EncodingType::BCS.load_key(Path::new(&file)).unwrap();
+        let mint_key: Ed25519PrivateKey = EncodingType::BCS
+            .load_key("vasp private key", Path::new(&file))
+            .unwrap();
         let account_key = AccountKey::from_private_key(mint_key);
         let address = account_key.authentication_key().derived_address();
         let sequence_number = query_sequence_numbers(client, &[address])
@@ -865,7 +867,7 @@ pub fn create_account_request(
     let preimage = AuthenticationKeyPreimage::ed25519(pubkey);
     let auth_key = AuthenticationKey::from_preimage(&preimage);
     creation_account.sign_with_transaction_builder(txn_factory.payload(
-        aptos_stdlib::encode_create_account_script_function(auth_key.derived_address()),
+        aptos_stdlib::encode_account_create_account(auth_key.derived_address()),
     ))
 }
 
@@ -887,7 +889,7 @@ pub fn gen_transfer_txn_request(
 ) -> SignedTransaction {
     sender.sign_with_transaction_builder(
         txn_factory
-            .payload(aptos_stdlib::encode_transfer_script_function(
+            .payload(aptos_stdlib::encode_test_coin_transfer(
                 *receiver, num_coins,
             ))
             .gas_unit_price(gas_price),

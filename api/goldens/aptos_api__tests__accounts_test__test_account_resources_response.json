@@ -8,6 +8,7 @@
   {
     "type": "0x1::Block::BlockMetadata",
     "data": {
+      "epoch_internal": "86400000000",
       "height": "0",
       "new_block_events": {
         "counter": "0",
@@ -24,9 +25,24 @@
     }
   },
   {
-    "type": "0x1::Account::Marker<0x1::Marker::ChainMarker>",
+    "type": "0x1::Stake::ValidatorSet",
     "data": {
-      "dummy_field": false
+      "active_validators": [
+        {
+          "addr": "0xf85fd00e30cd388d2609db24d6cc44f2652f27413456938eaa059f65231647cc",
+          "config": {
+            "consensus_pubkey": "0xcc62332e34bb2d5cd69f60efbb2a36cb916c7eb458301ea36636c4dbb012bd88",
+            "fullnode_address": "0x012d040000000000050c1c07203432fbf5b666fa771269cc7eb227146d3b16858f177a317ae8c349db210feb780800",
+            "network_address": "0x012d0400000000000524180720d5db8911156f3441c0757d97b8580cb639853454ec1a560f4927cf4acdfbd1080800"
+          },
+          "voting_power": "1"
+        }
+      ],
+      "consensus_scheme": 0,
+      "maximum_stake": "1000000",
+      "minimum_stake": "0",
+      "pending_active": [],
+      "pending_inactive": []
     }
   },
   {
@@ -42,9 +58,9 @@
     "data": {
       "currency_code_required": false,
       "module_addr": "0x1",
-      "module_name": "0x4170746f734163636f756e74",
+      "module_name": "0x4163636f756e74",
       "module_prologue_name": "0x6d6f64756c655f70726f6c6f677565",
-      "multi_agent_prologue_name": "0x7363726970745f70726f6c6f677565",
+      "multi_agent_prologue_name": "0x6d756c74695f6167656e745f7363726970745f70726f6c6f677565",
       "script_prologue_name": "0x7363726970745f70726f6c6f677565",
       "user_epilogue_name": "0x6570696c6f677565",
       "writeset_epilogue_name": "0x77726974657365745f6570696c6f677565",
@@ -64,24 +80,17 @@
     }
   },
   {
-    "type": "0x1::Version::VersionChainMarker<0x1::Marker::ChainMarker>",
-    "data": {
-      "dummy_field": false
-    }
-  },
-  {
     "type": "0x1::TestCoin::Balance",
     "data": {
       "coin": {
-        "value": "18446744073709551615"
+        "value": "18446744073709551614"
       }
     }
   },
   {
     "type": "0x1::TestCoin::CoinInfo",
     "data": {
-      "scaling_factor": "1000000",
-      "total_value": "18446744073709551615"
+      "scaling_factor": "1000000"
     }
   },
   {
@@ -154,33 +163,15 @@
     }
   },
   {
-    "type": "0x1::VMConfig::VMConfigChainMarker<0x1::Marker::ChainMarker>",
-    "data": {
-      "dummy_field": false
-    }
-  },
-  {
     "type": "0x1::Timestamp::CurrentTimeMicroseconds",
     "data": {
       "microseconds": "0"
     }
   },
   {
-    "type": "0x1::Capability::CapState<0x1::Marker::ChainMarker>",
-    "data": {
-      "delegates": []
-    }
-  },
-  {
     "type": "0x1::ConsensusConfig::ConsensusConfig",
     "data": {
       "config": "0x0101010a000000000000001400000000000000"
-    }
-  },
-  {
-    "type": "0x1::ConsensusConfig::ConsensusConfigChainMarker<0x1::Marker::ChainMarker>",
-    "data": {
-      "dummy_field": false
     }
   },
   {
@@ -200,48 +191,6 @@
         }
       },
       "last_reconfiguration_time": "0"
-    }
-  },
-  {
-    "type": "0x1::ValidatorConfig::ValidatorConfigChainMarker<0x1::Marker::ChainMarker>",
-    "data": {
-      "dummy_field": false
-    }
-  },
-  {
-    "type": "0x1::ValidatorSystem::ValidatorSystem",
-    "data": {
-      "scheme": 0,
-      "validators": [
-        {
-          "addr": "0xf85fd00e30cd388d2609db24d6cc44f2652f27413456938eaa059f65231647cc",
-          "config": {
-            "consensus_pubkey": "0xcc62332e34bb2d5cd69f60efbb2a36cb916c7eb458301ea36636c4dbb012bd88",
-            "fullnode_network_addresses": "0x012d040000000000050c1c07203432fbf5b666fa771269cc7eb227146d3b16858f177a317ae8c349db210feb780800",
-            "validator_network_addresses": "0x012d0400000000000524180720d5db8911156f3441c0757d97b8580cb639853454ec1a560f4927cf4acdfbd1080800"
-          },
-          "consensus_voting_power": "1",
-          "last_config_update_time": "0"
-        }
-      ]
-    }
-  },
-  {
-    "type": "0x1::ValidatorSystem::ValidatorSetChainMarker<0x1::Marker::ChainMarker>",
-    "data": {
-      "dummy_field": false
-    }
-  },
-  {
-    "type": "0x1::ValidatorOperatorConfig::ValidatorOperatorConfigChainMarker<0x1::Marker::ChainMarker>",
-    "data": {
-      "dummy_field": false
-    }
-  },
-  {
-    "type": "0x1::TransactionPublishingOption::ChainMarker<0x1::Marker::ChainMarker>",
-    "data": {
-      "dummy_field": false
     }
   },
   {

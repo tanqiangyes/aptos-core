@@ -8,7 +8,6 @@ use aptos_mempool::{MempoolClientRequest, MempoolClientSender, SubmissionStatus}
 use aptos_types::{
     account_address::AccountAddress,
     account_state::AccountState,
-    account_state_blob::AccountStateBlob,
     chain_id::ChainId,
     contract_event::ContractEvent,
     event::EventKey,
@@ -18,13 +17,10 @@ use aptos_types::{
 use storage_interface::{DbReader, Order};
 
 use anyhow::{ensure, format_err, Result};
-use aptos_types::{state_store::state_key::StateKey, transaction::Version};
+use aptos_types::{state_store::state_key_prefix::StateKeyPrefix, transaction::Version};
 use aptos_vm::data_cache::{IntoMoveResolver, RemoteStorageOwned};
 use futures::{channel::oneshot, SinkExt};
-use std::{
-    convert::{Infallible, TryFrom},
-    sync::Arc,
-};
+use std::{convert::Infallible, sync::Arc};
 use storage_interface::state_view::{DbStateView, DbStateViewAtVersion, LatestDbStateView};
 use warp::{filters::BoxedFilter, Filter, Reply};
 
@@ -100,25 +96,11 @@ impl Context {
         address: AccountAddress,
         version: u64,
     ) -> Result<Option<AccountState>> {
-        let state = self.get_account_state_blob(address, version)?;
-        Ok(match state {
-            Some(blob) => Some(AccountState::try_from(&blob)?),
-            None => None,
-        })
-    }
-
-    pub fn get_account_state_blob(
-        &self,
-        account: AccountAddress,
-        version: u64,
-    ) -> Result<Option<AccountStateBlob>> {
-        let (state_value, _) = self.db.get_state_value_with_proof_by_version(
-            &StateKey::AccountAddressKey(account),
-            version,
-        )?;
-        Ok(state_value.map(|x| {
-            AccountStateBlob::try_from(x).expect("Can't convert state value to account state blob")
-        }))
+        AccountState::from_access_paths_and_values(
+            &self
+                .db
+                .get_state_values_by_key_prefix(&StateKeyPrefix::from(address), version)?,
+        )
     }
 
     pub fn get_block_timestamp(&self, version: u64) -> Result<u64> {
@@ -133,10 +115,10 @@ impl Context {
     ) -> Result<Vec<TransactionOnChainData>> {
         let data = self
             .db
-            .get_transactions(start_version, limit as u64, ledger_version, true)?;
+            .get_transaction_outputs(start_version, limit as u64, ledger_version)?;
 
         let txn_start_version = data
-            .first_transaction_version
+            .first_transaction_output_version
             .ok_or_else(|| format_err!("no start version from database"))?;
         ensure!(
             txn_start_version == start_version,
@@ -145,26 +127,25 @@ impl Context {
             start_version
         );
 
-        let txns = data.transactions;
         let infos = data.proof.transaction_infos;
-        let events = data.events.unwrap_or_default();
+        let transactions_and_outputs = data.transactions_and_outputs;
 
         ensure!(
-            txns.len() == infos.len() && txns.len() == events.len(),
-            "invalid data size from database: {}, {}, {}",
-            txns.len(),
+            transactions_and_outputs.len() == infos.len(),
+            "invalid data size from database: {}, {}",
+            transactions_and_outputs.len(),
             infos.len(),
-            events.len()
         );
 
-        txns.into_iter()
+        transactions_and_outputs
+            .into_iter()
             .zip(infos.into_iter())
-            .zip(events.into_iter())
             .enumerate()
-            .map(|(i, ((txn, info), events))| {
+            .map(|(i, ((txn, txn_output), info))| {
                 let version = start_version + i as u64;
+                let (write_set, events, _, _) = txn_output.unpack();
                 self.get_accumulator_root_hash(version)
-                    .map(|h| (version, txn, info, events, h).into())
+                    .map(|h| (version, txn, info, events, h, write_set).into())
             })
             .collect()
     }
@@ -235,8 +216,13 @@ impl Context {
         &self,
         txn: TransactionWithProof,
     ) -> Result<TransactionOnChainData> {
+        // the type is Vec<(Transaction, TransactionOutput)> - given we have one transaction here, there should only ever be one value in this array
+        let (_, txn_output) = &self
+            .db
+            .get_transaction_outputs(txn.version, 1, txn.version)?
+            .transactions_and_outputs[0];
         self.get_accumulator_root_hash(txn.version)
-            .map(|h| (txn, h).into())
+            .map(|h| (txn, h, txn_output).into())
     }
 
     pub fn get_events(

@@ -3,16 +3,18 @@
 
 use crate::{
     common::{
-        types::{EncodingOptions, EncodingType, Error, KeyInputOptions, KeyType, SaveFile},
-        utils::{append_file_extension, check_if_file_exists, to_common_result, write_to_file},
+        types::{
+            CliError, CliTypedResult, EncodingOptions, EncodingType, ExtractPublicKey, KeyType,
+            PrivateKeyInputOptions, ProfileOptions, SaveFile,
+        },
+        utils::{append_file_extension, check_if_file_exists, write_to_file},
     },
-    CliResult,
+    CliCommand, CliResult,
 };
 use aptos_config::config::{Peer, PeerRole};
-use aptos_crypto::{
-    ed25519, ed25519::Ed25519PrivateKey, x25519, PrivateKey, Uniform, ValidCryptoMaterial,
-};
+use aptos_crypto::{ed25519, x25519, PrivateKey, Uniform, ValidCryptoMaterial};
 use aptos_types::account_address::{from_identity_public_key, AccountAddress};
+use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use rand::SeedableRng;
 use std::{
@@ -32,8 +34,8 @@ pub enum KeyTool {
 impl KeyTool {
     pub async fn execute(self) -> CliResult {
         match self {
-            KeyTool::Generate(tool) => to_common_result(tool.execute()),
-            KeyTool::ExtractPeer(tool) => to_common_result(tool.execute()),
+            KeyTool::Generate(tool) => tool.execute_serialized().await,
+            KeyTool::ExtractPeer(tool) => tool.execute_serialized().await,
         }
     }
 }
@@ -46,25 +48,32 @@ impl KeyTool {
 #[derive(Debug, Parser)]
 pub struct ExtractPeer {
     #[clap(flatten)]
-    key_input_options: KeyInputOptions,
+    private_key_input_options: PrivateKeyInputOptions,
     #[clap(flatten)]
     output_file_options: SaveFile,
     #[clap(flatten)]
     encoding_options: EncodingOptions,
+    #[clap(flatten)]
+    profile_options: ProfileOptions,
 }
 
-impl ExtractPeer {
-    pub fn execute(self) -> Result<HashMap<AccountAddress, Peer>, Error> {
+#[async_trait]
+impl CliCommand<HashMap<AccountAddress, Peer>> for ExtractPeer {
+    fn command_name(&self) -> &'static str {
+        "ExtractPeer"
+    }
+
+    async fn execute(self) -> CliTypedResult<HashMap<AccountAddress, Peer>> {
         // Check output file exists
         self.output_file_options.check_file()?;
 
         // Load key based on public or private
-        let public_key = self
-            .key_input_options
-            .extract_public_key(self.encoding_options.encoding)?;
+        let public_key = self.private_key_input_options.extract_x25519_public_key(
+            self.encoding_options.encoding,
+            &self.profile_options.profile,
+        )?;
 
         // Build peer info
-        // TODO: Take in an address?
         let peer_id = from_identity_public_key(public_key);
         let mut public_keys = HashSet::new();
         public_keys.insert(public_key);
@@ -75,8 +84,8 @@ impl ExtractPeer {
         map.insert(peer_id, peer);
 
         // Save to file
-        let yaml =
-            serde_yaml::to_string(&map).map_err(|err| Error::UnexpectedError(err.to_string()))?;
+        let yaml = serde_yaml::to_string(&map)
+            .map_err(|err| CliError::UnexpectedError(err.to_string()))?;
         self.output_file_options
             .save_to_file("Extracted peer", yaml.as_bytes())?;
         Ok(map)
@@ -98,8 +107,13 @@ pub struct GenerateKey {
     save_params: SaveKey,
 }
 
-impl GenerateKey {
-    pub fn execute(self) -> Result<HashMap<&'static str, PathBuf>, Error> {
+#[async_trait]
+impl CliCommand<HashMap<&'static str, PathBuf>> for GenerateKey {
+    fn command_name(&self) -> &'static str {
+        "GenerateKey"
+    }
+
+    async fn execute(self) -> CliTypedResult<HashMap<&'static str, PathBuf>> {
         self.save_params.check_key_file()?;
 
         // Generate a ed25519 key
@@ -110,18 +124,20 @@ impl GenerateKey {
             KeyType::X25519 => {
                 let private_key =
                     x25519::PrivateKey::from_ed25519_private_bytes(&ed25519_key.to_bytes())
-                        .map_err(|err| Error::UnexpectedError(err.to_string()))?;
+                        .map_err(|err| CliError::UnexpectedError(err.to_string()))?;
                 self.save_params.save_key(&private_key, "x22519")
             }
             KeyType::Ed25519 => self.save_params.save_key(&ed25519_key, "ed22519"),
         }
     }
+}
 
+impl GenerateKey {
     /// A test friendly typed key generation for x25519 keys.
-    pub fn generate_x25519(
+    pub async fn generate_x25519(
         encoding: EncodingType,
         key_file: &Path,
-    ) -> Result<(x25519::PrivateKey, x25519::PublicKey), Error> {
+    ) -> CliTypedResult<(x25519::PrivateKey, x25519::PublicKey)> {
         let args = format!(
             "generate --key-type {key_type:?} --output-file {key_file} --encoding {encoding:?} --assume-yes",
             key_type = KeyType::X25519,
@@ -129,18 +145,21 @@ impl GenerateKey {
             encoding = encoding,
         );
         let command = GenerateKey::parse_from(args.split_whitespace());
-        command.execute()?;
+        command.execute().await?;
         Ok((
-            encoding.load_key(key_file)?,
-            encoding.load_key(&append_file_extension(key_file, PUBLIC_KEY_EXTENSION)?)?,
+            encoding.load_key("private_key", key_file)?,
+            encoding.load_key(
+                "public_key",
+                &append_file_extension(key_file, PUBLIC_KEY_EXTENSION)?,
+            )?,
         ))
     }
 
     /// A test friendly typed key generation for e25519 keys.
-    pub fn generate_ed25519(
+    pub async fn generate_ed25519(
         encoding: EncodingType,
         key_file: &Path,
-    ) -> Result<(ed25519::Ed25519PrivateKey, ed25519::Ed25519PublicKey), Error> {
+    ) -> CliTypedResult<(ed25519::Ed25519PrivateKey, ed25519::Ed25519PublicKey)> {
         let args = format!(
             "generate --key-type {key_type:?} --output-file {key_file} --encoding {encoding:?} --assume-yes",
             key_type = KeyType::Ed25519,
@@ -148,17 +167,27 @@ impl GenerateKey {
             encoding = encoding,
         );
         let command = GenerateKey::parse_from(args.split_whitespace());
-        command.execute()?;
+        command.execute().await?;
         Ok((
-            encoding.load_key(key_file)?,
-            encoding.load_key(&append_file_extension(key_file, PUBLIC_KEY_EXTENSION)?)?,
+            encoding.load_key("private_key", key_file)?,
+            encoding.load_key(
+                "public_key",
+                &append_file_extension(key_file, PUBLIC_KEY_EXTENSION)?,
+            )?,
         ))
     }
 
     /// Generates an `Ed25519PrivateKey` without saving it to disk
     pub fn generate_ed25519_in_memory() -> ed25519::Ed25519PrivateKey {
         let mut rng = rand::rngs::StdRng::from_entropy();
-        Ed25519PrivateKey::generate(&mut rng)
+        ed25519::Ed25519PrivateKey::generate(&mut rng)
+    }
+
+    pub fn generate_x25519_in_memory() -> CliTypedResult<x25519::PrivateKey> {
+        let key = Self::generate_ed25519_in_memory();
+        x25519::PrivateKey::from_ed25519_private_bytes(&key.to_bytes()).map_err(|err| {
+            CliError::UnexpectedError(format!("Failed to convert ed25519 to x25519 {:?}", err))
+        })
     }
 }
 
@@ -172,7 +201,7 @@ pub struct SaveKey {
 
 impl SaveKey {
     /// Public key file name
-    fn public_key_file(&self) -> Result<PathBuf, Error> {
+    fn public_key_file(&self) -> CliTypedResult<PathBuf> {
         append_file_extension(
             self.file_options.output_file.as_path(),
             PUBLIC_KEY_EXTENSION,
@@ -180,7 +209,7 @@ impl SaveKey {
     }
 
     /// Check if the key file exists already
-    pub fn check_key_file(&self) -> Result<(), Error> {
+    pub fn check_key_file(&self) -> CliTypedResult<()> {
         // Check if file already exists
         self.file_options.check_file()?;
         check_if_file_exists(
@@ -194,12 +223,12 @@ impl SaveKey {
         &self,
         key: &Key,
         key_name: &'static str,
-    ) -> Result<HashMap<&'static str, PathBuf>, Error> {
-        let encoded_private_key = self.encoding_options.encoding.encode_key(key, key_name)?;
+    ) -> CliTypedResult<HashMap<&'static str, PathBuf>> {
+        let encoded_private_key = self.encoding_options.encoding.encode_key(key_name, key)?;
         let encoded_public_key = self
             .encoding_options
             .encoding
-            .encode_key(&key.public_key(), key_name)?;
+            .encode_key(key_name, &key.public_key())?;
 
         // Write private and public keys to files
         let public_key_file = self.public_key_file()?;

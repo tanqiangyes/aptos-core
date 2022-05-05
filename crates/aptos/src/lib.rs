@@ -3,12 +3,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod account;
 pub mod common;
-pub mod list;
+pub mod config;
 pub mod move_tool;
 pub mod op;
 
-use crate::common::types::{CliResult, Error};
+use crate::common::types::{CliCommand, CliResult};
 use clap::Parser;
 
 /// CLI tool for interacting with the Aptos blockchain and nodes
@@ -16,19 +17,26 @@ use clap::Parser;
 #[derive(Parser)]
 #[clap(name = "aptos", author, version, propagate_version = true)]
 pub enum Tool {
-    List(list::ListResources),
+    #[clap(subcommand)]
+    Account(account::AccountTool),
+    #[clap(subcommand)]
+    Config(config::ConfigTool),
+    Init(common::init::InitTool),
     #[clap(subcommand)]
     Move(move_tool::MoveTool),
     #[clap(subcommand)]
-    Op(op::OpTool),
+    Key(op::key::KeyTool),
 }
 
 impl Tool {
     pub async fn execute(self) -> CliResult {
         match self {
-            Tool::List(list_tool) => list_tool.execute().await,
+            Tool::Account(tool) => tool.execute().await,
+            Tool::Config(tool) => tool.execute().await,
+            // TODO: Replace entirely with config init
+            Tool::Init(tool) => tool.execute_serialized_success().await,
             Tool::Move(tool) => tool.execute().await,
-            Tool::Op(op_tool) => op_tool.execute().await,
+            Tool::Key(tool) => tool.execute().await,
         }
     }
 }
